@@ -99,3 +99,9 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# random documents
+*.txt
+*.pdf
+*.txt.gz
+*.zip
