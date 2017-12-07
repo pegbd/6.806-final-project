@@ -105,3 +105,4 @@ ENV/
 *.pdf
 *.txt.gz
 *.zip
+.DS_Store
