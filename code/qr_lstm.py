@@ -9,6 +9,7 @@ import preprocessing
 ########################## Custom Classes ##########################
 ####################################################################
 
+# 1: Custom Maximum Margin Loss class
 class QR_Maximum_Margin_Loss(nn.Module):
     def __init__(self):
         super(QR_Maximum_Margin_Loss, self).__init__()
@@ -17,6 +18,7 @@ class QR_Maximum_Margin_Loss(nn.Module):
         # ctx.save_for_backward(q, positive, negatives, del_value)
         return torch.max(torch.stack([F.cosine_similarity(q, n, 0) - F.cosine_similarity(q, positive, 0) + del_value for n in negatives]))
 
+# 2: Custom LSTM Cell class
 class LSTM_Cell(nn.Module):
     """
     An individual LSTM cell
@@ -119,6 +121,39 @@ class LSTM_Cell(nn.Module):
 
         return (h_avg, c_avg)
 
+# 3. Model wrapper for built-in Bidirectional LSTM_Cell
+class BiDiLSTM(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers, output_dim):
+        super(BiDiLSTM, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.output_dim = output_dim
+
+        # self.decoder = nn.Linear(2*hidden_dim, output_dim)
+
+        # initialize the wrapped bidirectional network
+        self.net = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers, bidirectional=True)
+
+        # initialize and store parameter weights
+        self.params = {}
+        for name, param in self.net.named_parameters():
+              nn.init.normal(param)
+              self.params[name] = param
+
+    def forward(self, X, h = None, c = None):
+
+        if h is None and c is None:
+            states, final_state = self.net(X)
+        else:
+            states, final_state = self.net(X, (h, c))
+
+        avg = torch.sum(states) / states.size()[0]
+        # out = self.decoder(final_state[0])
+
+        return avg, final_state[1]
+
+
 ####################################################################
 ############################# TRAINING #############################
 ####################################################################
@@ -141,8 +176,8 @@ candidates = preprocessing.question_to_candidates
 training_batches = preprocessing.split_into_batches(candidates.keys(), BATCH_SIZE)
 
 # Initialize Network and Optimizer
-lstm = LSTM_Cell(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[1], output_dim=OUTPUT_SIZE)
-optimizer = optim.Adam(params=lstm.parameters(), lr=LEARNING_RATES[0], weight_decay=L2_NORMS[0])
+lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[1], num_layers=1, output_dim=OUTPUT_SIZE)
+optimizer = optim.SGD(params=lstm.parameters(), lr=LEARNING_RATES[0], weight_decay=L2_NORMS[0])
 
 for batch in training_batches:
     batch_loss = 0
