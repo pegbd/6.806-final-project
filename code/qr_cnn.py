@@ -77,7 +77,6 @@ class CNNTrainer:
 
 	def train(self):
 		preprocessor = PreConv()
-		words = preprocessor.get_word_to_vector_dict()
 		questions = preprocessor.get_questions_dict()
 		candidate_ids = preprocessor.get_candidate_ids()
 

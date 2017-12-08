@@ -53,19 +53,6 @@ class PreConv:
             word = split[0]
 
             vec = [float(val) for val in split[1:]]
-            # add blank words here
-            #
-            #
-            #
-            #
-            #
-            #
-            #
-            #
-            #
-            #
-            #
-            
 
             word_to_vector[word] = vec
 
@@ -73,6 +60,7 @@ class PreConv:
         return word_to_vector
 
     def get_question_dict(self):
+        word_to_vector = self.get_word_to_vector_dict
         # create the question dictionary
         f = open(self.tokens_path, 'r')
 
@@ -86,8 +74,18 @@ class PreConv:
             body = split[2].strip() if len(split) == 3 else None
 
             # convert title and body to array of word vectors
+            blank_vec = [0.0] * 200
             title_matrix = [word_to_vector[w] for w in title.split() if w in vocab]
+            # pad title with blanks
+            title_matrix = title_matrix.extend([blank for _ in range(100-len(title_matrix))])
+            # max sentence length is 100
+            title_matrix = title_matrix[:100]
+
             body_matrix = [word_to_vector[w] for w in body.split() if w in vocab] if body is not None else []
+            # pad body with blanks
+            body_matrix = body_matrix.extend([blank for _ in range(100 - len(body_matrix))])
+            # max sentence length is 100
+            body_matrix = body_matrix[:100]
 
             id_to_question[id_num] = (to_float_variable(title_matrix), to_float_variable(body_matrix))
 
