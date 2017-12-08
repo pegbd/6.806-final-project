@@ -53,6 +53,20 @@ class PreConv:
             word = split[0]
 
             vec = [float(val) for val in split[1:]]
+            # add blank words here
+            #
+            #
+            #
+            #
+            #
+            #
+            #
+            #
+            #
+            #
+            #
+            
+
             word_to_vector[word] = vec
 
         f.close()
