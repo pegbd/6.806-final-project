@@ -11,7 +11,8 @@ Takes in data from ../askubuntu-master/vector/vectors_pruned.200.txt
 class PreConv:
     """
     """
-    def __init__(self):
+    def __init__(self, debug=False):
+        self.debug = debug
         self.vectors_path = '../askubuntu-master/vector/vectors_pruned.200.txt'
         self.tokens_path = '../askubuntu-master/text_tokenized.txt'
         self.train_path = '../askubuntu-master/train_random.txt'
@@ -19,16 +20,17 @@ class PreConv:
 
 
     # wrappers for data types
-    # def to_int_variable(data):
-    #     return Variable(torch.IntTensor(data))
+    def to_int_variable(self, data, requires_grad=True):
+        return Variable(torch.IntTensor(data), 
+            requires_grad=requires_grad)
 
-    def to_float_variable(data):
+    def to_float_variable(self, data):
         return Variable(torch.FloatTensor(data))
 
     # def to_long_variable(data):
     #     return Variable(torch.LongTensor(data))
 
-    def split_into_batches(data, batch_size):
+    def split_into_batches(self, data, batch_size):
         batches = []
         remainder = len(data) % batch_size
 
@@ -60,7 +62,7 @@ class PreConv:
         return word_to_vector
 
     def get_question_dict(self):
-        word_to_vector = self.get_word_to_vector_dict
+        word_to_vector = self.get_word_to_vector_dict()
         # create the question dictionary
         f = open(self.tokens_path, 'r')
 
@@ -77,17 +79,26 @@ class PreConv:
             blank_vec = [0.0] * 200
             title_matrix = [word_to_vector[w] for w in title.split() if w in vocab]
             # pad title with blanks
-            title_matrix = title_matrix.extend([blank for _ in range(100-len(title_matrix))])
+            len_title = len(title_matrix)
+            title_matrix.extend([blank_vec for _ in range(100-len_title)])
             # max sentence length is 100
             title_matrix = title_matrix[:100]
+            assert len(title_matrix) == 100
 
             body_matrix = [word_to_vector[w] for w in body.split() if w in vocab] if body is not None else []
             # pad body with blanks
-            body_matrix = body_matrix.extend([blank for _ in range(100 - len(body_matrix))])
+            len_body = len(body_matrix)
+            body_matrix.extend([blank_vec for _ in range(100 - len_body)])
             # max sentence length is 100
             body_matrix = body_matrix[:100]
+            assert len(body_matrix) == 100
 
-            id_to_question[id_num] = (to_float_variable(title_matrix), to_float_variable(body_matrix))
+            id_to_question[id_num] = (
+                self.to_float_variable(title_matrix), 
+                self.to_float_variable(body_matrix), 
+                self.to_int_variable(len_title, requires_grad=False), 
+                self.to_int_variable(len_body, requires_grad=False)
+            )
 
         f.close()
         return id_to_question
@@ -98,7 +109,10 @@ class PreConv:
         f = open(self.train_path, 'r')
 
         question_to_candidates = {}
+        count = 0
         for line in f.readlines():
+            count += 1
+            if self.debug and count > 100: break
             split = line.strip().split('\t')
 
             question = split[0]
