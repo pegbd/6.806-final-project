@@ -60,7 +60,9 @@ class Net(nn.Module):
 		# TODO: apply batch normalization ???
 
 		x = self.conv1(X)
-		x = torch.sum(x, dim=1) / sentence_lengths
+		sum1 = torch.sum(x, dim=1)
+		lengths = sentence_lengths.repeat(1, sum1.size()[1]).t()
+		x = sum1 / lengths
 		x = F.tanh(x)
 		return x
 
@@ -102,9 +104,11 @@ class CNNTrainer:
 			for q_id in id_batch:
 				optimizer.zero_grad()
 				question_title, question_body, q_len_title, q_len_body = questions[q_id]
+
 				pos_id = random.choice(candidate_ids[q_id][0])
 
 				pos_title, pos_body, pos_len_title, pos_len_body = questions[pos_id]
+
 				neg_titles = [questions[n][0] for n in candidate_ids[q_id][1]]
 				neg_bodies = [questions[n][1] for n in candidate_ids[q_id][1]]
 				neg_len_titles = [questions[n][2] for n in candidate_ids[q_id][1]]
@@ -116,9 +120,14 @@ class CNNTrainer:
 				# need the length of each title to average later
 				x_lens_titles = [q_len_title, pos_len_title]
 				x_lens_titles.extend(neg_len_titles)
+				x_lens_titles = Variable(torch.FloatTensor(x_lens_titles), 
+            							requires_grad=False)
+				x_lens_titles.resize(x_lens_titles.size()[0], 1)
+
 				output_titles = conv_net_cell(
-					torch.stack(x_titles), 
-					torch.stack(x_lens_titles))
+					torch.stack(x_titles),
+					x_lens_titles
+				)
 
 				# run the model on the bodies
 				x_bodies = [question_body, pos_body]
@@ -126,12 +135,17 @@ class CNNTrainer:
 				# need the length of each body to average later
 				x_lens_bodies = [q_len_body, pos_len_body]
 				x_lens_bodies.extend(neg_len_bodies)
+				x_lens_bodies = Variable(torch.FloatTensor(x_lens_bodies), 
+            				requires_grad=False)
+				x_lens_bodies.resize(x_lens_bodies.size()[0], 1)
+
 				output_bodies = conv_net_cell(
 					torch.stack(x_bodies),
-					torch.stack(neg_len_bodies))
+					x_lens_bodies
+				)
 
 				# average the two for each corresponding question
-				out_avg = torch.sum(out_titles + out_bodies) / 2.0				
+				out_avg = torch.sum(output_titles + output_bodies) / 2.0				
 				
 				# run the output through the loss
 				loss = mm_loss(out_avg)

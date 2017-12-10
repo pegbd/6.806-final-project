@@ -50,7 +50,10 @@ class PreConv:
         f = open(self.vectors_path, 'r')
 
         word_to_vector = {}
+        count=0
         for line in f.readlines():
+            count += 1
+            if self.debug and count > 1000: break
             split = line.strip().split(" ")
             word = split[0]
 
@@ -79,7 +82,7 @@ class PreConv:
             blank_vec = [0.0] * 200
             title_matrix = [word_to_vector[w] for w in title.split() if w in vocab]
             # pad title with blanks
-            len_title = len(title_matrix)
+            len_title = min(len(title_matrix), 100)   
             title_matrix.extend([blank_vec for _ in range(100-len_title)])
             # max sentence length is 100
             title_matrix = title_matrix[:100]
@@ -87,17 +90,17 @@ class PreConv:
 
             body_matrix = [word_to_vector[w] for w in body.split() if w in vocab] if body is not None else []
             # pad body with blanks
-            len_body = len(body_matrix)
+            len_body = min(len(body_matrix), 100)
             body_matrix.extend([blank_vec for _ in range(100 - len_body)])
             # max sentence length is 100
             body_matrix = body_matrix[:100]
             assert len(body_matrix) == 100
 
             id_to_question[id_num] = (
-                self.to_float_variable(title_matrix), 
+                self.to_float_variable(title_matrix),
                 self.to_float_variable(body_matrix), 
-                self.to_int_variable(len_title, requires_grad=False), 
-                self.to_int_variable(len_body, requires_grad=False)
+                float(len_title),
+                float(len_body),
             )
 
         f.close()
