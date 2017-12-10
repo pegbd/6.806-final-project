@@ -1,151 +1,166 @@
+from __future__ import print_function
 import torch
 from torch import nn, optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 import numpy as np
 from pre_conv import PreConv
-import random.choice
-import random.seed
+import random
+
+
+# 1: Custom Maximum Margin Loss class
+class QR_Maximum_Margin_Loss(nn.Module):
+    def __init__(self):
+        super(QR_Maximum_Margin_Loss, self).__init__()
+
+    def forward(self, y_pred, delta=.01):
+    	'''
+
+    	loss = max_p(score(q, p) - score(q, p_i) + delta)
+    	     = max_p(score1 - score2 + delta)
+
+    	'''
+        # ctx.save_for_backward(q, positive, negatives, del_value)
+
+        q, positive, negatives = y_pred[0], y_pred[1], y_pred[2:]
+        
+        score2 = F.cosine_similarity(q, positive, 0)
+        score1s_pos = score2 - delta # + delta to account for adding delta later 
+        score1s = [F.cosine_similarity(q, n, 0) for n in negatives]
+        score1s.append(score1s_pos)
+        
+        values = [score1 - score2 + delta for score1 in score1s]
+        return torch.max(torch.stack(values))
+
 
 # cnn model
-
-
-class ConvNetCell(nn.Module):
+class Net(nn.Module):
 	"""
 	"""
-	def __init__(self, output_dim):
+	def __init__(self):
 		super(Net, self).__init__()
-
 		# conv layer
+		self.conv1 = nn.Conv1d(
+			in_channels = 100, 
+			out_channels = 64, 
+			kernel_size = 5,
+			padding = 3
+		)
 
-		in_channels = 1 # TODO
-		kernel_size1 = 5
-		padding1 = 4
-		out_channels1 = 20
-		self.conv1 = nn.Conv1d(in_channels, out_channels1)
+	def forward(self, X, sentence_lengths):
+		"""
+		Args:
+			X: shape of (n_examples, in_channels, n_features)
+			sentence_lengths = shape of (n_examples, 1, 1)
 
+		Returns:
+			x: Pytorch variable of shape 
+				(n_examples, 1, n_features)
+		"""
+		# TODO: apply batch normalization ???
 
-		# mean pooling layer
-		kernel_size_mp1 = 4
-		stride_mp1 = 2
-		self.mean_pool1 = nn.AvgPool1d(kernel_size2, stride_mp1)
-
-	def forward(self, X):
-		# TODO
-
+		x = self.conv1(X)
+		x = torch.sum(x, dim=1) / sentence_lengths
+		x = F.tanh(x)
+		return x
 
 
 
 class CNNTrainer:
 	"""
 	"""
-	def __init__(self, batch_size):
+	def __init__(self, batch_size, lr, l2_norm, debug=False):
 		self.batch_size = batch_size
-		self.id_batches = self.init_id_batches()
+		self.lr = lr
+		self.l2_norm = l2_norm
+		self.debug = debug
+		SENTENCE_LENGTHS = 100
 		
 
-	def init_id_batches(self):
-		
-
-	def train(self):
-		preprocessor = PreConv()
-		words = preprocessor.get_word_to_vector_dict()
-		questions = preprocessor.get_questions_dict()
+	def train(self, conv_net_cell):
+		print('pre-processing . . .')
+		preprocessor = PreConv(self.debug)
+		questions = preprocessor.get_question_dict()
 		candidate_ids = preprocessor.get_candidate_ids()
 
 		#gettings the batches as ids (not yet the actual data)
-		id_batches = preprocessor.split_into_batches(candidate_ids.keys(), batch_size)
+		id_batches = preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
 
-		cnn = nn.Conv1d(1, 1)
+
+		print('setting up model . . .')
+		
+		mm_loss = QR_Maximum_Margin_Loss()
 		optimizer = optim.Adam(
-			params=cnn.parameters(), 
-			lr=LEARNING_RATES[0], 
-			weight_decay=L2_NORMS[0])
+			params=conv_net_cell.parameters(),
+			lr=self.lr, 
+			weight_decay=self.l2_norm)
 
-		for id_batch in self.id_batches:
+		i_batch = -1
+		for id_batch in id_batches:
+			i_batch += 1
 			batch_loss = 0
-			for q_id in batch:
-				question = questions[q_id]
-				positives_q = random.choice(candidates[q_id]p[0])
-				########################
-				######################
-				###################
-				# todo: get one random positive sample
+			for q_id in id_batch:
+				optimizer.zero_grad()
+				question_title, question_body, q_len_title, q_len_body = questions[q_id]
+				pos_id = random.choice(candidate_ids[q_id][0])
+
+				pos_title, pos_body, pos_len_title, pos_len_body = questions[pos_id]
+				neg_titles = [questions[n][0] for n in candidate_ids[q_id][1]]
+				neg_bodies = [questions[n][1] for n in candidate_ids[q_id][1]]
+				neg_len_titles = [questions[n][2] for n in candidate_ids[q_id][1]]
+				neg_len_bodies = [questions[n][3] for n in candidate_ids[q_id][1]]
+
+				# run the model on the titles
+				x_titles = [question_title, pos_title]
+				x_titles.extend(neg_titles)
+				# need the length of each title to average later
+				x_lens_titles = [q_len_title, pos_len_title]
+				x_lens_titles.extend(neg_len_titles)
+				output_titles = conv_net_cell(
+					torch.stack(x_titles), 
+					torch.stack(x_lens_titles))
+
+				# run the model on the bodies
+				x_bodies = [question_body, pos_body]
+				x_bodies.extend(neg_bodies)
+				# need the length of each body to average later
+				x_lens_bodies = [q_len_body, pos_len_body]
+				x_lens_bodies.extend(neg_len_bodies)
+				output_bodies = conv_net_cell(
+					torch.stack(x_bodies),
+					torch.stack(neg_len_bodies))
+
+				# average the two for each corresponding question
+				out_avg = torch.sum(out_titles + out_bodies) / 2.0				
+				
+				# run the output through the loss
+				loss = mm_loss(out_avg)
+				loss.backward()
+				print(loss)
+				batch_loss += loss
+
+				# back propagate the errors
+				optimizer.step()
+
+			print('batch %s loss = %s'%(str(i_batch), str(batch_loss)))
+
+		conv_net_cell.save_state_dict('model_cnn_v1.pt')
 
 
 
 
-
-####################################################################
-############################# TRAINING #############################
-####################################################################
-
-# Network Setup
+debug=True
 torch.manual_seed(1)
 random.seed(1)
-INPUT_SIZE = 200
-OUTPUT_SIZE = 2
-LEARNING_RATES = [.00001, .001, .1, 10]
-L2_NORMS = [.00001, .001, 10]
-NUM_ITERATIONS = 1
-BATCH_SIZE = 64
+BATCH_SIZE = 1
+LEARNING_RATE = .00001
+L2_NORM = .00001
+# BATCH_SIZE = 64
 
 # getting data before batches
-trainer = CNNTrainer()
-trainer.train()
+trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, debug)
+conv_net_cell = Net()
+trainer.train(conv_net_cell)
 
 
-# Initialize Network and Optimizer
-### in the trainer
-
-
-for batch in training_batches:
-    for i in range(NUM_ITERATIONS):
-        batch_loss = 0
-        for qr in batch:
-
-            # get the title and body matrices for the question, the positive and negative candidates
-            q = questions[qr]
-            pos = [questions[p] for p in candidates[qr][0]]
-            neg = [questions[n] for n in candidates[qr][1]]
-
-            # model representation of question q
-            q_title_avg, _ = lstm(q[0])
-            q_body_avg, _ = lstm(q[1])
-            q_avg = (q_title_avg + q_body_avg) / 2
-
-            # model representation of positive candidates
-            pos_avgs = []
-            for pos_cand in pos:
-                p_title_avg, _ = lstm(pos_cand[0])
-                p_body_avg, _ = lstm(pos_cand[1])
-                p_avg = (p_title_avg + p_body_avg) / 2
-
-                pos_avgs.append(p_avg)
-
-            # model representation of negative candidates
-            neg_avgs = []
-            for neg_cand in neg:
-                n_title_avg, _ = lstm(neg_cand[0])
-                n_body_avg, _ = lstm(neg_cand[1])
-                n_avg = (n_title_avg + n_body_avg) / 2
-
-                neg_avgs.append(n_avg)
-
-            mml = QR_Maximum_Margin_Loss()
-
-            negatives = torch.stack(neg_avgs)
-            loss = mml(q_avg, pos_avgs[0], negatives)
-            print("loss ", loss)
-            batch_loss += loss
-
-            # back propogate with gradients
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        print ("batch loss = ", batch_loss)
-        print ("------------------------")
-
-lstm.save_state_dict('mytraininglstm.pt')
 
