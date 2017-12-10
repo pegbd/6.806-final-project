@@ -1,12 +1,18 @@
 import torch
 import numpy as np
 from torch.autograd import Variable
+import copy
+import random
 
 """
 For use in converting sequences of words into sequences of their vector representations
 
 Takes in data from ../askubuntu-master/vector/vectors_pruned.200.txt
 """
+# constants
+EMPTY_WORD_PAD = [0.0 for i in range(200)]
+MAX_SEQUENCE_LENGTH = 100
+NEGATIVE_CANDIDATE_SIZE = 20
 
 # wrappers for data types
 def to_int_variable(data):
@@ -31,11 +37,10 @@ def split_into_batches(data, batch_size):
 
     return batches
 
-
 # create the word_to_vector dictionary
 
 f = open('../askubuntu-master/vector/vectors_pruned.200.txt', 'r')
-
+print("word to vector")
 word_to_vector = {}
 for line in f.readlines():
     split = line.strip().split(" ")
@@ -48,7 +53,7 @@ f.close()
 
 # create the question dictionary
 f = open('../askubuntu-master/text_tokenized.txt', 'r')
-
+print("id to question")
 vocab = set(word_to_vector.keys())
 id_to_question = {}
 for line in f.readlines():
@@ -56,27 +61,30 @@ for line in f.readlines():
 
     id_num = split[0].strip()
     title = split[1].strip()
-    body = split[2].strip() if len(split) == 3 else None
+    body = split[2].strip() if len(split) == 3 else ""
 
-    # convert title and body to array of word vectors
-    title_matrix = [word_to_vector[w] for w in title.split() if w in vocab]
-    body_matrix = [word_to_vector[w] for w in body.split() if w in vocab] if body is not None else []
-
-    id_to_question[id_num] = (to_float_variable(title_matrix), to_float_variable(body_matrix))
+    id_to_question[id_num] = (title.split(), body.split())
 
 f.close()
 
 # create question -> candidates dictionary
 f = open('../askubuntu-master/train_random.txt', 'r')
-
+print("question to candidates")
 question_to_candidates = {}
 for line in f.readlines():
     split = line.strip().split('\t')
 
     question = split[0]
-    positive = split[1].split(' ')
-    negative = split[2].split(' ')
+    positive = split[1].split()
+    negative = split[2].split()
+
+    negative = random.sample(negative, NEGATIVE_CANDIDATE_SIZE)
 
     question_to_candidates[question] = (positive, negative)
 
 f.close()
+
+def sentence_to_embeddings(s):
+    if len(s) > MAX_SEQUENCE_LENGTH:
+        s = s[:MAX_SEQUENCE_LENGTH]
+    return [word_to_vector[w] if w in vocab else copy.deepcopy(EMPTY_WORD_PAD) for w in s] + [copy.deepcopy(EMPTY_WORD_PAD) for i in range(MAX_SEQUENCE_LENGTH - len(s))]

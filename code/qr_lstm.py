@@ -4,6 +4,7 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 import numpy as np
 import preprocessing
+import time
 
 ####################################################################
 ########################## Custom Classes ##########################
@@ -17,6 +18,7 @@ class QR_Maximum_Margin_Loss(nn.Module):
     def forward(self, q, positive, negatives, del_value=.01):
         # ctx.save_for_backward(q, positive, negatives, del_value)
         return torch.max(torch.stack([F.cosine_similarity(q, n, 0) - F.cosine_similarity(q, positive, 0) + del_value for n in negatives]))
+
 
 # 2: Custom LSTM Cell class
 class LSTM_Cell(nn.Module):
@@ -121,6 +123,7 @@ class LSTM_Cell(nn.Module):
 
         return (h_avg, c_avg)
 
+
 # 3. Model wrapper for built-in Bidirectional LSTM_Cell
 class BiDiLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, output_dim):
@@ -133,7 +136,7 @@ class BiDiLSTM(nn.Module):
         # self.decoder = nn.Linear(2*hidden_dim, output_dim)
 
         # initialize the wrapped bidirectional network
-        self.net = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers, bidirectional=True)
+        self.net = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers, batch_first=True, bidirectional=True)
 
         # initialize and store parameter weights
         self.params = {}
@@ -141,24 +144,21 @@ class BiDiLSTM(nn.Module):
               nn.init.normal(param)
               self.params[name] = param
 
-    def forward(self, X, h = None, c = None):
+    def forward(self, X):
 
-        if h is None and c is None:
-            states, final_state = self.net(X)
-        else:
-            states, final_state = self.net(X, (h, c))
+        data = self.net(X)
 
-        avg = torch.sum(states) / states.size()[0]
-        # out = self.decoder(final_state[0])
-
-        return avg, final_state[1]
-
+        return data
 
 ####################################################################
 ############################# TRAINING #############################
 ####################################################################
 
-# Network Setup
+
+###############################
+######## Network Set Up #######
+###############################
+
 torch.manual_seed(1)
 INPUT_SIZE = 200
 HIDDEN_SIZES = [INPUT_SIZE/4, INPUT_SIZE/2, INPUT_SIZE, 2*INPUT_SIZE]
@@ -166,7 +166,9 @@ OUTPUT_SIZE = 2
 LEARNING_RATES = [.00001, .001, .1, 10]
 L2_NORMS = [.00001, .001, 10]
 NUM_ITERATIONS = 1
-BATCH_SIZE = 64
+BATCH_SIZE = 4
+NUM_LAYERS = 1
+DEL = .0001
 
 # Work Space
 words = preprocessing.word_to_vector
@@ -176,55 +178,139 @@ candidates = preprocessing.question_to_candidates
 training_batches = preprocessing.split_into_batches(candidates.keys(), BATCH_SIZE)
 
 # Initialize Network and Optimizer
-lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[1], num_layers=1, output_dim=OUTPUT_SIZE)
+lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[0], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
 optimizer = optim.SGD(params=lstm.parameters(), lr=LEARNING_RATES[0], weight_decay=L2_NORMS[0])
 
+print("starting training")
 for batch in training_batches:
+
+    # intialize batch timer
+    batch_time_start = time.time()
+
+    # initialize total batch loss
     batch_loss = 0
-    for i in range(NUM_ITERATIONS):
-        for qr in batch:
 
-            # get the title and body matrices for the question, the positive and negative candidates
-            q = questions[qr]
-            pos = [questions[p] for p in candidates[qr][0]]
-            neg = [questions[n] for n in candidates[qr][1]]
 
-            # model representation of question q
-            q_title_avg, _ = lstm(q[0])
-            q_body_avg, _ = lstm(q[1])
-            q_avg = (q_title_avg + q_body_avg) / 2
+    ###############################
+    ## Initial Batch Data Set Up ##
+    ###############################
 
-            # model representation of positive candidates
-            pos_avgs = []
-            for pos_cand in pos:
-                p_title_avg, _ = lstm(pos_cand[0])
-                p_body_avg, _ = lstm(pos_cand[1])
-                p_avg = (p_title_avg + p_body_avg) / 2
+    # the word matrices for each sequence in the entire batch
+    batch_title_data = []
+    batch_body_data = []
 
-                pos_avgs.append(p_avg)
+    # the ordered, true lengths of each sequence before padding
+    batch_title_lengths = []
+    batch_body_lengths = []
 
-            # model representation of negative candidates
-            neg_avgs = []
-            for neg_cand in neg:
-                n_title_avg, _ = lstm(neg_cand[0])
-                n_body_avg, _ = lstm(neg_cand[1])
-                n_avg = (n_title_avg + n_body_avg) / 2
+    format_start = time.time()
+    for qr in batch:
 
-                neg_avgs.append(n_avg)
+        # question of interest
+        q = questions[qr]
 
-            mml = QR_Maximum_Margin_Loss()
+        batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
+        batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
+        batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
+        batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
 
-            negatives = torch.stack(neg_avgs)
-            loss = mml(q_avg, pos_avgs[0], negatives)
-            print("loss ", loss)
-            batch_loss += loss
+        # positive example
+        pos = questions[candidates[qr][0][0]]
 
-            # back propogate with gradients
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
+        batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
+        batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
+        batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
 
-    print ("batch loss = ", batch_loss)
-    print ("------------------------")
+        # negative examples
+        for n in candidates[qr][1]:
+            neg = questions[n]
 
-lstm.save_state_dict('mytraininglstm.pt')
+            batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
+            batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
+            batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
+            batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
+
+    print("formatting took ", time.time() - format_start)
+
+    # convert batch data and lengths to Variables
+    batch_title_data = preprocessing.to_float_variable(batch_title_data)
+    batch_body_data = preprocessing.to_float_variable(batch_body_data)
+    batch_title_lengths = preprocessing.to_float_variable(batch_title_lengths)
+    batch_body_lengths = preprocessing.to_float_variable(batch_body_lengths)
+
+
+    #################################
+    ## Run data through LSTM Model ##
+    #################################
+
+    forward_start = time.time()
+    title_states, title_out = lstm(batch_title_data)
+    print ("the title forward lstm took ", time.time() - forward_start)
+
+    forward_start = time.time()
+    body_states, body_out = lstm(batch_body_data)
+    print ("the body forward lstm took ", time.time() - forward_start)
+
+
+    ##########################################
+    ## Re-arrange Data For Loss Calculation ##
+    ##########################################
+
+    # mean pooling of the hidden states of each question's title and body sequences
+    title_states = torch.sum(title_states, dim=1, keepdim=False)
+    averaged_title_states = title_states * batch_title_lengths.repeat(title_states.size(dim=1), 1).t()
+
+    body_states = torch.sum(body_states, dim=1, keepdim = False)
+    averaged_body_states = body_states * batch_body_lengths.repeat(body_states.size(dim=1), 1).t()
+
+    # take the average between the title and body representations for the final representation
+    final_question_reps = (averaged_title_states + averaged_body_states).div(2)
+
+    # separate out each training instance in the batch
+    training_instances = torch.chunk(final_question_reps, BATCH_SIZE)
+
+
+    ###############################################
+    ## Calculate Loss for Each Training Instance ##
+    ###############################################
+
+    print("Calculating the loss")
+
+    loss_data = []
+    for instance in training_instances:
+
+        # rep of question of interest and positive candidate
+        h_q = instance[0]
+        h_p = instance[1]
+
+        # score of positive candidate
+        s_p = F.cosine_similarity(h_q, h_p, 0)
+        scores = [s_p - s_p]
+
+        # scores of negatives
+        for i in range(2, len(instance)):
+            h_n = instance[i]
+
+            score = F.cosine_similarity(h_q, h_n, 0) - s_p + DEL
+            scores.append(score)
+
+        loss_data.append(torch.cat(scores, 0))
+
+    loss_data = torch.stack(loss_data, 1)
+    targets = Variable(torch.LongTensor([0 for i in range(len(loss_data))]), requires_grad=True)
+
+    # pass in loss data into loss function
+    mml = nn.MultiMarginLoss()
+    loss = mml(loss_data, targets)
+
+    print("batch loss is", loss)
+
+    # back prop and SGD
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    print("this batch took ", time.time() - batch_time_start)
+
+torch.save(lstm, 'qr_lstm.pt')
