@@ -16,13 +16,13 @@ NEGATIVE_CANDIDATE_SIZE = 20
 
 # wrappers for data types
 def to_int_variable(data):
-    return Variable(torch.IntTensor(data))
+    return Variable(torch.IntTensor(data), requires_grad = True)
 
 def to_float_variable(data):
-    return Variable(torch.FloatTensor(data))
+    return Variable(torch.FloatTensor(data), requires_grad = True)
 
 def to_long_variable(data):
-    return Variable(torch.LongTensor(data))
+    return Variable(torch.LongTensor(data), requires_grad = True)
 
 def split_into_batches(data, batch_size):
     batches = []

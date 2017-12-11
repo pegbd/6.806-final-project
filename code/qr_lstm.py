@@ -164,11 +164,12 @@ INPUT_SIZE = 200
 HIDDEN_SIZES = [INPUT_SIZE/4, INPUT_SIZE/2, INPUT_SIZE, 2*INPUT_SIZE]
 OUTPUT_SIZE = 2
 LEARNING_RATES = [.00001, .001, .1, 10]
-L2_NORMS = [.00001, .001, 10]
+L2_NORMS = [.00000000000001, .001, 10]
 NUM_ITERATIONS = 1
-BATCH_SIZE = 4
+BATCH_SIZE = 16
 NUM_LAYERS = 1
 DEL = .0001
+EPOCHS = 4
 
 # Work Space
 words = preprocessing.word_to_vector
@@ -178,139 +179,147 @@ candidates = preprocessing.question_to_candidates
 training_batches = preprocessing.split_into_batches(candidates.keys(), BATCH_SIZE)
 
 # Initialize Network and Optimizer
-lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[0], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
-optimizer = optim.SGD(params=lstm.parameters(), lr=LEARNING_RATES[0], weight_decay=L2_NORMS[0])
+lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[1], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
+optimizer = optim.SGD(params=lstm.parameters(), lr=LEARNING_RATES[1], weight_decay=L2_NORMS[1])
 
-print("starting training")
-for batch in training_batches:
+# function wrapper for training
+def train_model_epoch():
 
-    # intialize batch timer
-    batch_time_start = time.time()
+    # initialize epoch loss
+    epoch_loss = 0
 
-    # initialize total batch loss
-    batch_loss = 0
+    print("starting training")
+    for i in range(len(training_batches)):
 
+        print("\n")
+        print(" TRAINING BATCH:")
+        print(str(i + 1) + '/' + str(len(training_batches)))
+        print("\n")
 
-    ###############################
-    ## Initial Batch Data Set Up ##
-    ###############################
+        batch = training_batches[i]
 
-    # the word matrices for each sequence in the entire batch
-    batch_title_data = []
-    batch_body_data = []
+        # intialize batch timer
+        batch_time_start = time.time()
 
-    # the ordered, true lengths of each sequence before padding
-    batch_title_lengths = []
-    batch_body_lengths = []
+        ###############################
+        ## Initial Batch Data Set Up ##
+        ###############################
 
-    format_start = time.time()
-    for qr in batch:
+        # the word matrices for each sequence in the entire batch
+        batch_title_data = []
+        batch_body_data = []
 
-        # question of interest
-        q = questions[qr]
+        # the ordered, true lengths of each sequence before padding
+        batch_title_lengths = []
+        batch_body_lengths = []
 
-        batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
-        batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
-        batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
-        batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
+        format_start = time.time()
+        for qr in batch:
 
-        # positive example
-        pos = questions[candidates[qr][0][0]]
+            # question of interest
+            q = questions[qr]
 
-        batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
-        batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
-        batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
-        batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
+            batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
+            batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
+            batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
+            batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
 
-        # negative examples
-        for n in candidates[qr][1]:
-            neg = questions[n]
+            # positive example
+            pos = questions[candidates[qr][0][0]]
 
-            batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
-            batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
+            batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
+            batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
             batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
             batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
 
-    print("formatting took ", time.time() - format_start)
+            # negative examples
+            for n in candidates[qr][1]:
+                neg = questions[n]
 
-    # convert batch data and lengths to Variables
-    batch_title_data = preprocessing.to_float_variable(batch_title_data)
-    batch_body_data = preprocessing.to_float_variable(batch_body_data)
-    batch_title_lengths = preprocessing.to_float_variable(batch_title_lengths)
-    batch_body_lengths = preprocessing.to_float_variable(batch_body_lengths)
+                batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
+                batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
+                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
+                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
 
+        print("formatting took ", time.time() - format_start)
 
-    #################################
-    ## Run data through LSTM Model ##
-    #################################
-
-    forward_start = time.time()
-    title_states, title_out = lstm(batch_title_data)
-    print ("the title forward lstm took ", time.time() - forward_start)
-
-    forward_start = time.time()
-    body_states, body_out = lstm(batch_body_data)
-    print ("the body forward lstm took ", time.time() - forward_start)
+        # convert batch data and lengths to Variables
+        batch_title_data = preprocessing.to_float_variable(batch_title_data)
+        batch_body_data = preprocessing.to_float_variable(batch_body_data)
+        batch_title_lengths = preprocessing.to_float_variable(batch_title_lengths)
+        batch_body_lengths = preprocessing.to_float_variable(batch_body_lengths)
 
 
-    ##########################################
-    ## Re-arrange Data For Loss Calculation ##
-    ##########################################
+        #################################
+        ## Run data through LSTM Model ##
+        #################################
 
-    # mean pooling of the hidden states of each question's title and body sequences
-    title_states = torch.sum(title_states, dim=1, keepdim=False)
-    averaged_title_states = title_states * batch_title_lengths.repeat(title_states.size(dim=1), 1).t()
+        forward_start = time.time()
+        title_states, title_out = lstm(batch_title_data)
+        print ("the title forward lstm took ", time.time() - forward_start)
 
-    body_states = torch.sum(body_states, dim=1, keepdim = False)
-    averaged_body_states = body_states * batch_body_lengths.repeat(body_states.size(dim=1), 1).t()
+        forward_start = time.time()
+        body_states, body_out = lstm(batch_body_data)
+        print ("the body forward lstm took ", time.time() - forward_start)
 
-    # take the average between the title and body representations for the final representation
-    final_question_reps = (averaged_title_states + averaged_body_states).div(2)
+        ##########################################
+        ## Re-arrange Data For Loss Calculation ##
+        ##########################################
 
-    # separate out each training instance in the batch
-    training_instances = torch.chunk(final_question_reps, BATCH_SIZE)
+        # mean pooling of the hidden states of each question's title and body sequences
+        title_states = torch.sum(title_states, dim=1, keepdim=False)
+        averaged_title_states = title_states * batch_title_lengths.repeat(title_states.size(dim=1), 1).t()
+
+        body_states = torch.sum(body_states, dim=1, keepdim = False)
+        averaged_body_states = body_states * batch_body_lengths.repeat(body_states.size(dim=1), 1).t()
+
+        # take the average between the title and body representations for the final representation
+        final_question_reps = (averaged_title_states + averaged_body_states).div(2)
+
+        # separate out each training instance in the batch
+        training_instances = torch.chunk(final_question_reps, len(batch))
 
 
-    ###############################################
-    ## Calculate Loss for Each Training Instance ##
-    ###############################################
+        ###############################################
+        ## Calculate Loss for Each Training Instance ##
+        ###############################################
 
-    print("Calculating the loss")
+        print(" ###### Calculating the loss ######")
 
-    loss_data = []
-    for instance in training_instances:
+        loss_data = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in training_instances]
+        loss_data = torch.stack(loss_data, 1).t()
 
-        # rep of question of interest and positive candidate
-        h_q = instance[0]
-        h_p = instance[1]
+        target_data = [0 for inst in range(len(training_instances))]
+        target_data = preprocessing.to_long_variable(target_data)
 
-        # score of positive candidate
-        s_p = F.cosine_similarity(h_q, h_p, 0)
-        scores = [s_p - s_p]
+        # pass in loss data into loss function
+        mml = nn.MultiMarginLoss()
+        loss = mml(loss_data, target_data)
 
-        # scores of negatives
-        for i in range(2, len(instance)):
-            h_n = instance[i]
+        print("batch loss is", loss)
 
-            score = F.cosine_similarity(h_q, h_n, 0) - s_p + DEL
-            scores.append(score)
+        # back prop and SGD
+        back_time_start = time.time()
 
-        loss_data.append(torch.cat(scores, 0))
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    loss_data = torch.stack(loss_data, 1)
-    targets = Variable(torch.LongTensor([0 for i in range(len(loss_data))]), requires_grad=True)
+        print("backpropogation took ", time.time() - back_time_start)
 
-    # pass in loss data into loss function
-    mml = nn.MultiMarginLoss()
-    loss = mml(loss_data, targets)
+        # add batch loss to total epoch loss
+        epoch_loss += loss.data[0]
 
-    print("batch loss is", loss)
+        print("this batch took ", time.time() - batch_time_start)
 
-    # back prop and SGD
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    return epoch_loss
 
-    print("this batch took ", time.time() - batch_time_start)
+def train_model():
+    for epoch in range(EPOCHS):
+        loss_this_epoch = train_model_epoch()
+        print("Epoch " + str(epoch) + " loss:" + str(loss_this_epoch))
 
-torch.save(lstm, 'qr_lstm.pt')
+
+if __name__ == "__main__":
+    train_model()
+    torch.save(lstm, 'qr_lstm_model.pt')
