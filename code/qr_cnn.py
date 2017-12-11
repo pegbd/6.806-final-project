@@ -9,28 +9,28 @@ import random
 
 
 # 1: Custom Maximum Margin Loss class
-class QR_Maximum_Margin_Loss(nn.Module):
-    def __init__(self):
-        super(QR_Maximum_Margin_Loss, self).__init__()
+# class QR_Maximum_Margin_Loss(nn.Module):
+# 	def __init__(self):
+# 		super(QR_Maximum_Margin_Loss, self).__init__()
 
-    def forward(self, y_pred, delta=.01):
-    	'''
+# 	def forward(self, y_pred, delta=.01):
+# 		'''
 
-    	loss = max_p(score(q, p) - score(q, p_i) + delta)
-    	     = max_p(score1 - score2 + delta)
+# 		loss = max_p(score(q, p) - score(q, p_i) + delta)
+# 			 = max_p(score1 - score2 + delta)
 
-    	'''
-        # ctx.save_for_backward(q, positive, negatives, del_value)
+# 		'''
+# 		# ctx.save_for_backward(q, positive, negatives, del_value)
 
-        q, positive, negatives = y_pred[0], y_pred[1], y_pred[2:]
-        
-        score2 = F.cosine_similarity(q, positive, 0)
-        score1s_pos = score2 - delta # + delta to account for adding delta later 
-        score1s = [F.cosine_similarity(q, n, 0) for n in negatives]
-        score1s.append(score1s_pos)
-        
-        values = [score1 - score2 + delta for score1 in score1s]
-        return torch.max(torch.stack(values))
+# 		q, positive, negatives = y_pred[0], y_pred[1], y_pred[2:]
+		
+# 		score2 = F.cosine_similarity(q, positive, 0)
+# 		score1s_pos = score2 - delta # + delta to account for adding delta later 
+# 		score1s = [F.cosine_similarity(q, n, 0) for n in negatives]
+# 		score1s.append(score1s_pos)
+		
+# 		values = [score1 - score2 + delta for score1 in score1s]
+# 		return torch.max(torch.stack(values))
 
 
 # cnn model
@@ -41,11 +41,12 @@ class Net(nn.Module):
 		super(Net, self).__init__()
 		# conv layer
 		self.conv1 = nn.Conv1d(
-			in_channels = 100, 
-			out_channels = 64, 
+			in_channels = 200,
+			out_channels = 64,
 			kernel_size = 5,
 			padding = 3
 		)
+
 
 	def forward(self, X, sentence_lengths):
 		"""
@@ -58,12 +59,24 @@ class Net(nn.Module):
 				(n_examples, 1, n_features)
 		"""
 		# TODO: apply batch normalization ???
-
+		print('______-_____')
+		# print(X)
+		# print(X.size())
 		x = self.conv1(X)
+		# print(x)
+		# print(x.size())
 		sum1 = torch.sum(x, dim=1)
-		lengths = sentence_lengths.repeat(1, sum1.size()[1]).t()
-		x = sum1 / lengths
+		# print(sum1)
+		# print(sum1.size())
+		lengths = sentence_lengths.repeat(1, sum1.size()[1])
+		# print(lengths)
+		# print(lengths.size())
+		# print(lengths)
+		x = sum1.div(lengths)
+		# print(x)
 		x = F.tanh(x)
+		print(x)
+		print('______^______')
 		return x
 
 
@@ -71,12 +84,45 @@ class Net(nn.Module):
 class CNNTrainer:
 	"""
 	"""
-	def __init__(self, batch_size, lr, l2_norm, debug=False):
+	def __init__(self, batch_size, lr, l2_norm, delta, debug=False):
 		self.batch_size = batch_size
 		self.lr = lr
 		self.l2_norm = l2_norm
+		self.delta = delta
 		self.debug = debug
 		SENTENCE_LENGTHS = 100
+
+	def get_loss_data(self, train_instances):
+		loss_data = []
+		for instance in train_instances:
+
+			# rep of question of interest and positive candidate
+			h_q = instance[0]
+			h_p = instance[1]
+
+			# score of positive candidate
+			s_p = F.cosine_similarity(h_q, h_p, 0)
+			scores = [s_p - s_p]
+
+			# scores of negatives
+			for i in range(2, len(instance)):
+				h_n = instance[i]
+
+				score = F.cosine_similarity(h_q, h_n, 0) - s_p + self.delta
+				scores.append(score)
+
+			loss_data.append(torch.cat(scores, 0))
+		loss_data = torch.stack(loss_data, 1)
+		return loss_data
+
+	def run_through_model(x, lens):
+		# run the model on the title/body
+		x = torch.stack(x)
+		x = torch.transpose(x, 1, 2)
+		# need the length of each text to average later
+		lens = Variable(torch.FloatTensor(lens), requires_grad=False)
+		lens.resize(lens.size()[0], 1)
+		return conv_net_cell(x, lens)
 		
 
 	def train(self, conv_net_cell):
@@ -91,7 +137,6 @@ class CNNTrainer:
 
 		print('setting up model . . .')
 		
-		mm_loss = QR_Maximum_Margin_Loss()
 		optimizer = optim.Adam(
 			params=conv_net_cell.parameters(),
 			lr=self.lr, 
@@ -114,51 +159,47 @@ class CNNTrainer:
 				neg_len_titles = [questions[n][2] for n in candidate_ids[q_id][1]]
 				neg_len_bodies = [questions[n][3] for n in candidate_ids[q_id][1]]
 
-				# run the model on the titles
+
 				x_titles = [question_title, pos_title]
 				x_titles.extend(neg_titles)
-				# need the length of each title to average later
 				x_lens_titles = [q_len_title, pos_len_title]
 				x_lens_titles.extend(neg_len_titles)
-				x_lens_titles = Variable(torch.FloatTensor(x_lens_titles), 
-            							requires_grad=False)
-				x_lens_titles.resize(x_lens_titles.size()[0], 1)
 
-				output_titles = conv_net_cell(
-					torch.stack(x_titles),
-					x_lens_titles
-				)
-
-				# run the model on the bodies
 				x_bodies = [question_body, pos_body]
 				x_bodies.extend(neg_bodies)
-				# need the length of each body to average later
 				x_lens_bodies = [q_len_body, pos_len_body]
 				x_lens_bodies.extend(neg_len_bodies)
-				x_lens_bodies = Variable(torch.FloatTensor(x_lens_bodies), 
-            				requires_grad=False)
-				x_lens_bodies.resize(x_lens_bodies.size()[0], 1)
 
-				output_bodies = conv_net_cell(
-					torch.stack(x_bodies),
-					x_lens_bodies
-				)
+				# run the model on the bodies
+				output_titles = self.run_through_model(
+					x_titles, x_lens_titles)
+				output_bodies = self.run_through_model(
+					x_bodies, x_lens_bodies)
+				
 
 				# average the two for each corresponding question
-				out_avg = torch.sum(output_titles + output_bodies) / 2.0				
+				out_avg = (output_titles + output_bodies).div(2)				
 				
 				# run the output through the loss
-				loss = mm_loss(out_avg)
+				# loss = mm_loss(out_avg)
+				train_instances = torch.chunk(out_avg, self.batch_size)
+				loss_data = self.get_loss_data(train_instances)
+				targets = Variable(torch.LongTensor(
+					[0 for i in range(len(loss_data))]), 
+					requires_grad=True)
+
+				mml = nn.MultiMarginLoss()
+				loss = mml(loss_data, targets)
+
+				# back propagate the errors
 				loss.backward()
 				print(loss)
 				batch_loss += loss
-
-				# back propagate the errors
 				optimizer.step()
 
 			print('batch %s loss = %s'%(str(i_batch), str(batch_loss)))
 
-		conv_net_cell.save_state_dict('model_cnn_v1.pt')
+		torch.save(conv_net_cell.state_dict(), 'model_cnn_v1.pt')
 
 
 
@@ -169,10 +210,11 @@ random.seed(1)
 BATCH_SIZE = 1
 LEARNING_RATE = .00001
 L2_NORM = .00001
+DELTA = 0.0001
 # BATCH_SIZE = 64
 
 # getting data before batches
-trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, debug)
+trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, DELTA, debug)
 conv_net_cell = Net()
 trainer.train(conv_net_cell)
 
