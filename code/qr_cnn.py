@@ -43,8 +43,7 @@ class Net(nn.Module):
 		self.conv1 = nn.Conv1d(
 			in_channels = 200,
 			out_channels = 64,
-			kernel_size = 5,
-			padding = 3
+			kernel_size = 5
 		)
 
 
@@ -60,20 +59,20 @@ class Net(nn.Module):
 		"""
 		# TODO: apply batch normalization ???
 		print('______-_____')
-		# print(X)
-		# print(X.size())
+		print(X)
+		print(X.size())
 		x = self.conv1(X)
-		# print(x)
-		# print(x.size())
+		print(x)
+		print(x.size())
 		sum1 = torch.sum(x, dim=1)
-		# print(sum1)
-		# print(sum1.size())
+		print(sum1)
+		print(sum1.size())
 		lengths = sentence_lengths.repeat(1, sum1.size()[1])
-		# print(lengths)
-		# print(lengths.size())
-		# print(lengths)
+		print(lengths)
+		print(lengths.size())
+		
 		x = sum1.div(lengths)
-		# print(x)
+		print(x)
 		x = F.tanh(x)
 		print(x)
 		print('______^______')
@@ -115,7 +114,7 @@ class CNNTrainer:
 		loss_data = torch.stack(loss_data, 1)
 		return loss_data
 
-	def run_through_model(x, lens):
+	def run_through_model(self, x, lens):
 		# run the model on the title/body
 		x = torch.stack(x)
 		x = torch.transpose(x, 1, 2)
@@ -196,6 +195,7 @@ class CNNTrainer:
 				print(loss)
 				batch_loss += loss
 				optimizer.step()
+			assert False
 
 			print('batch %s loss = %s'%(str(i_batch), str(batch_loss)))
 
@@ -210,13 +210,16 @@ random.seed(1)
 BATCH_SIZE = 1
 LEARNING_RATE = .00001
 L2_NORM = .00001
-DELTA = 0.0001
+DELTA = 1.0 # is was 0.0001 earlier
 # BATCH_SIZE = 64
 
 # getting data before batches
 trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, DELTA, debug)
 conv_net_cell = Net()
 trainer.train(conv_net_cell)
+
+
+## nn.utils.clip_grad_norm(net.parameters(), 10)
 
 
 
