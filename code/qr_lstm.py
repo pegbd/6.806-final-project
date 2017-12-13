@@ -138,22 +138,25 @@ class BiDiLSTM(nn.Module):
         # initialize the wrapped bidirectional network
         self.net = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers, batch_first=True, bidirectional=True)
 
-        # initialize and store parameter weights
-        self.params = {}
-        for name, param in self.net.named_parameters():
-              nn.init.normal(param)
-              self.params[name] = param
+        # # initialize and store parameter weights
+        # self.params = {}
+        # for name, param in self.net.named_parameters():
+        #       nn.init.uniform(param, a=-2, b=2)
+        #       self.params[name] = param
 
     def forward(self, X):
-
-        data = self.net(X)
-
-        return data
+        return self.net(X)
 
 ####################################################################
 ############################# TRAINING #############################
 ####################################################################
 
+def get_mask(sequence, hidden_size):
+    n = min(100, len(sequence))
+    return list(np.transpose(np.array([[1 for i in range(n)] + [0 for i in range(preprocessing.MAX_SEQUENCE_LENGTH - n)] for j in range(2*hidden_size)])))
+
+def mirror_sequence(sequence):
+    return sequence + sequence.reverse()
 
 ###############################
 ######## Network Set Up #######
@@ -163,8 +166,8 @@ torch.manual_seed(1)
 INPUT_SIZE = 200
 HIDDEN_SIZES = [INPUT_SIZE/4, INPUT_SIZE/2, INPUT_SIZE, 2*INPUT_SIZE]
 OUTPUT_SIZE = 2
-LEARNING_RATES = [.00001, .001, .1, 10]
-L2_NORMS = [.00000000000001, .001, 10]
+LEARNING_RATES = [.00001, .001, .1, 1, 10]
+L2_NORMS = [0, .00000000000001, .001, .1, 1, 10]
 NUM_ITERATIONS = 1
 BATCH_SIZE = 16
 NUM_LAYERS = 1
@@ -179,11 +182,17 @@ candidates = preprocessing.question_to_candidates
 training_batches = preprocessing.split_into_batches(candidates.keys(), BATCH_SIZE)
 
 # Initialize Network and Optimizer
-lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[1], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
-optimizer = optim.SGD(params=lstm.parameters(), lr=LEARNING_RATES[1], weight_decay=L2_NORMS[1])
+# lstm = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[2], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
+# mml = nn.MultiMarginLoss()
+# optimizer = optim.Adam(params=lstm.parameters(), lr=LEARNING_RATES[1], weight_decay=L2_NORMS[2])
+
+# Initialize Network and Optimizer
+lstm = None
+mml = None
+optimizer = None
 
 # function wrapper for training
-def train_model_epoch():
+def train_model_epoch(lstm, loss_func, optimizer):
 
     # initialize epoch loss
     epoch_loss = 0
@@ -213,6 +222,10 @@ def train_model_epoch():
         batch_title_lengths = []
         batch_body_lengths = []
 
+        # masks for title and body
+        batch_title_mask = []
+        batch_body_mask = []
+
         format_start = time.time()
         for qr in batch:
 
@@ -220,26 +233,36 @@ def train_model_epoch():
             q = questions[qr]
 
             batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
-            batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
             batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
+            batch_title_mask.append(get_mask(q[0], HIDDEN_SIZES[2]))
+
+
+            batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
             batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
+            batch_body_mask.append(get_mask(q[1], HIDDEN_SIZES[2]))
 
             # positive example
             pos = questions[candidates[qr][0][0]]
 
             batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
-            batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
             batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
+            batch_title_mask.append(get_mask(pos[0], HIDDEN_SIZES[2]))
+
             batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
+            batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
+            batch_body_mask.append(get_mask(pos[1], HIDDEN_SIZES[2]))
 
             # negative examples
             for n in candidates[qr][1]:
                 neg = questions[n]
 
                 batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
+                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[0])))
+                batch_title_mask.append(get_mask(neg[0], HIDDEN_SIZES[2]))
+
                 batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
-                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
-                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
+                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[1])))
+                batch_body_mask.append(get_mask(neg[1], HIDDEN_SIZES[2]))
 
         print("formatting took ", time.time() - format_start)
 
@@ -248,11 +271,16 @@ def train_model_epoch():
         batch_body_data = preprocessing.to_float_variable(batch_body_data)
         batch_title_lengths = preprocessing.to_float_variable(batch_title_lengths)
         batch_body_lengths = preprocessing.to_float_variable(batch_body_lengths)
+        batch_title_mask = preprocessing.to_float_variable(batch_title_mask)
+        batch_body_mask = preprocessing.to_float_variable(batch_body_mask)
 
 
         #################################
         ## Run data through LSTM Model ##
         #################################
+
+        # first! set zero grad... just in case.
+        optimizer.zero_grad()
 
         forward_start = time.time()
         title_states, title_out = lstm(batch_title_data)
@@ -265,6 +293,9 @@ def train_model_epoch():
         ##########################################
         ## Re-arrange Data For Loss Calculation ##
         ##########################################
+
+        title_states = title_states * batch_title_mask
+        body_states = body_states * batch_body_mask
 
         # mean pooling of the hidden states of each question's title and body sequences
         title_states = torch.sum(title_states, dim=1, keepdim=False)
@@ -279,31 +310,36 @@ def train_model_epoch():
         # separate out each training instance in the batch
         training_instances = torch.chunk(final_question_reps, len(batch))
 
-
         ###############################################
         ## Calculate Loss for Each Training Instance ##
         ###############################################
 
         print(" ###### Calculating the loss ######")
 
-        loss_data = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in training_instances]
-        loss_data = torch.stack(loss_data, 1).t()
+        cosine_scores = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in training_instances]
+        cosine_scores = torch.stack(cosine_scores, 1).t()
+
+        print cosine_scores.t()
 
         target_data = [0 for inst in range(len(training_instances))]
         target_data = preprocessing.to_long_variable(target_data)
 
         # pass in loss data into loss function
-        mml = nn.MultiMarginLoss()
-        loss = mml(loss_data, target_data)
+        loss = loss_func(cosine_scores, target_data)
 
         print("batch loss is", loss)
 
         # back prop and SGD
         back_time_start = time.time()
 
-        optimizer.zero_grad()
+        # print_params()
+
         loss.backward()
+        print batch_title_data.grad
+        print batch_body_data.grad
         optimizer.step()
+
+        # print_params()
 
         print("backpropogation took ", time.time() - back_time_start)
 
@@ -312,14 +348,23 @@ def train_model_epoch():
 
         print("this batch took ", time.time() - batch_time_start)
 
+    # save model after each epoch
+    torch.save(lstm, 'qr_lstm_model.pt')
     return epoch_loss
 
-def train_model():
-    for epoch in range(EPOCHS):
-        loss_this_epoch = train_model_epoch()
-        print("Epoch " + str(epoch) + " loss:" + str(loss_this_epoch))
+def print_params():
+    for k, v in lstm.params.items():
+        print k
+        print v
 
+def load_model():
+    return torch.load('qr_lstm_model.pt')
 
-if __name__ == "__main__":
-    train_model()
-    torch.save(lstm, 'qr_lstm_model.pt')
+def initialize():
+
+    # Initialize Network and Optimizer
+    model = load_model()
+    mml = nn.MultiMarginLoss()
+    optimizer = optim.Adam(params=model.parameters(), lr=LEARNING_RATES[1], weight_decay=L2_NORMS[2])
+
+    return model, mml, optimizer

@@ -84,7 +84,49 @@ for line in f.readlines():
 
 f.close()
 
+# dev set
+f = open('../askubuntu-master/dev.txt', 'r')
+print("dev set")
+dev_set = {}
+dev_positive_indices = {}
+for line in f.readlines():
+    split = line.strip().split('\t')
+
+    question = split[0]
+    positives = split[1].split()
+    candidates = split[2].split()
+    bm_scores = [float(i) for i in split[3].split()]
+
+    indices = [1 if i in positives else 0 for i in candidates]
+
+    dev_positive_indices[question] = indices
+    dev_set[question] = (positives, candidates, bm_scores)
+
+f.close()
+
+# test set
+f = open('../askubuntu-master/test.txt', 'r')
+print("test set")
+test_set = {}
+test_positive_indices = {}
+for line in f.readlines():
+    split = line.strip().split('\t')
+
+    question = split[0]
+    positives = split[1].split()
+    candidates = split[2].split()
+    bm_scores = [float(i) for i in split[3].split()]
+
+    indices = [1 if i in positives else 0 for i in candidates]
+
+    test_positive_indices[question] = indices
+    test_set[question] = (positives, candidates, bm_scores)
+
+f.close()
+
 def sentence_to_embeddings(s):
     if len(s) > MAX_SEQUENCE_LENGTH:
         s = s[:MAX_SEQUENCE_LENGTH]
-    return [word_to_vector[w] if w in vocab else copy.deepcopy(EMPTY_WORD_PAD) for w in s] + [copy.deepcopy(EMPTY_WORD_PAD) for i in range(MAX_SEQUENCE_LENGTH - len(s))]
+
+    padded_tail = [copy.deepcopy(EMPTY_WORD_PAD) for i in range(MAX_SEQUENCE_LENGTH - len(s))]
+    return [word_to_vector[w] if w in vocab else copy.deepcopy(EMPTY_WORD_PAD) for w in s] + padded_tail
