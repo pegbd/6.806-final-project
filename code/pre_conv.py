@@ -120,7 +120,8 @@ class PreConv:
 
             question = split[0]
             positive = split[1].split(' ')
-            negative = split[2].split(' ')
+            negative = split[2].split(' ')[:20]
+            assert len(negative) == 20
 
             question_to_candidates[question] = (positive, negative)
 
