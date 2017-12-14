@@ -11,11 +11,21 @@ Takes in data from ../askubuntu-master/vector/vectors_pruned.200.txt
 class PreConv:
     """
     """
-    def __init__(self, debug=False):
+    def __init__(self, data_type='train', debug=False):
+        """
+        data_type: must be one of: 'train', 'dev', or 'test'
+            is 'train' by default.
+        """
+        self.data_type = data_type
         self.debug = debug
+
         self.vectors_path = '../askubuntu-master/vector/vectors_pruned.200.txt'
         self.tokens_path = '../askubuntu-master/text_tokenized.txt'
-        self.train_path = '../askubuntu-master/train_random.txt'
+        if data_type == 'train':
+            self.data_path = '../askubuntu-master/%s_random.txt'%(data_type)
+        else:
+            self.data_path = '../askubuntu-master/%s.txt'%(data_type)
+
 
         self.blank_vec = [0.0] * 200
         self.word_to_vector = self.get_word_to_vector_dict()
@@ -34,11 +44,13 @@ class PreConv:
     # def to_long_variable(data):
     #     return Variable(torch.LongTensor(data))
 
+
     def split_into_batches(self, data, batch_size):
         batches = []
-        remainder = len(data) % batch_size
+        div = int(len(data) / batch_size)
+        rem = len(data) % batch_size
 
-        for i in xrange(0, len(data) - remainder, batch_size):
+        for i in xrange(0, len(data) - rem, batch_size):
             batch = data[i:i+batch_size]
             batches.append(batch)
 
@@ -72,6 +84,7 @@ class PreConv:
         f = open(self.tokens_path, 'r')
         
         id_to_question = {}
+        pos_indicies = {}
         for line in f.readlines():
             split = line.strip().split("\t")
 
@@ -101,7 +114,7 @@ class PreConv:
 
     def get_candidate_ids(self):
         # create question -> candidates dictionary
-        f = open(self.train_path, 'r')
+        f = open(self.data_path, 'r')
 
         question_to_candidates = {}
         count = 0
@@ -111,11 +124,36 @@ class PreConv:
             split = line.strip().split('\t')
 
             question = split[0]
-            positive = split[1].split(' ')
-            negative = split[2].split(' ')[:20]
-            assert len(negative) == 20
-
-            question_to_candidates[question] = (positive, negative)
+            positive = split[1].split()
+            
+            if self.data_type == 'train':
+                negative = split[2].split(' ')[:20]
+                assert len(negative) == 20
+                question_to_candidates[question] = (positive, negative)
+            
+            else:
+                candidates = split[2].split()
+                bm_scores = [float(i) for i in split[3].split()]
+                question_to_candidates[question] = (positive, candidates, bm_scores)
 
         f.close()
         return question_to_candidates
+
+
+    def get_pos_indicies_all(self):
+        f = open('../askubuntu-master/%s.txt'%(self.data_type), 'r')
+        dev_set = {}
+        positive_indices = {}
+        for line in f.readlines():
+            split = line.strip().split('\t')
+
+            question = split[0]
+            positives = split[1].split()
+            candidates = split[2].split()
+
+            indices = [1 if i in positives else 0 for i in candidates]
+
+            positive_indices[question] = indices
+
+        f.close()
+        return positive_indices
