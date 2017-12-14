@@ -17,6 +17,10 @@ class PreConv:
         self.tokens_path = '../askubuntu-master/text_tokenized.txt'
         self.train_path = '../askubuntu-master/train_random.txt'
 
+        self.blank_vec = [0.0] * 200
+        self.word_to_vector = self.get_word_to_vector_dict()
+        self.vocab = set(self.word_to_vector.keys())
+
 
 
     # wrappers for data types
@@ -43,7 +47,6 @@ class PreConv:
         return batches
 
 
-
     def get_word_to_vector_dict(self):
         # create the word_to_vector dictionary
 
@@ -65,11 +68,9 @@ class PreConv:
         return word_to_vector
 
     def get_question_dict(self):
-        word_to_vector = self.get_word_to_vector_dict()
         # create the question dictionary
         f = open(self.tokens_path, 'r')
-
-        vocab = set(word_to_vector.keys())
+        
         id_to_question = {}
         for line in f.readlines():
             split = line.strip().split("\t")
@@ -78,33 +79,24 @@ class PreConv:
             title = split[1].strip()
             body = split[2].strip() if len(split) == 3 else None
 
-            # convert title and body to array of word vectors
-            blank_vec = [0.0] * 200
-            title_matrix = [word_to_vector[w] for w in title.split() if w in vocab]
-            # pad title with blanks
-            len_title = min(len(title_matrix), 100)   
-            title_matrix.extend([blank_vec for _ in range(100-len_title)])
-            # max sentence length is 100
-            title_matrix = title_matrix[:100]
-            assert len(title_matrix) == 100
-
-            body_matrix = [word_to_vector[w] for w in body.split() if w in vocab] if body is not None else []
-            # pad body with blanks
-            len_body = min(len(body_matrix), 100)
-            body_matrix.extend([blank_vec for _ in range(100 - len_body)])
-            # max sentence length is 100
-            body_matrix = body_matrix[:100]
-            assert len(body_matrix) == 100
-
-            id_to_question[id_num] = (
-                self.to_float_variable(title_matrix),
-                self.to_float_variable(body_matrix), 
-                float(len_title),
-                float(len_body),
-            )
+            id_to_question[id_num] = (title, body)
 
         f.close()
         return id_to_question
+
+    def sequence_to_vec(self, seq, max_seq_len=100):
+        vec = [self.word_to_vector[w] for w in seq.split() if w in self.vocab]
+        # pad title with blanks
+        len_seq = min(len(vec), 100)   
+        vec.extend([self.blank_vec for _ in range(max_seq_len - len_seq)])
+        # asserting the max sequence length
+        vec = vec[:max_seq_len]
+        vec = Variable(torch.FloatTensor(vec), requires_grad=False)
+        return vec
+
+    def get_seq_len(self, seq, max_seq_len=100):
+        len_seq = min(len([0 for w in seq.split() if w in self.vocab]), 100)   
+        return len_seq
 
 
     def get_candidate_ids(self):

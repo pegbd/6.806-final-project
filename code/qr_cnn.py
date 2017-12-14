@@ -40,42 +40,36 @@ class Net(nn.Module):
 	def __init__(self):
 		super(Net, self).__init__()
 		# conv layer
+		p_drop = 0.3
 		self.conv1 = nn.Conv1d(
 			in_channels = 200,
 			out_channels = 64,
-			kernel_size = 5
+			kernel_size = 5, 
+			padding = 2
 		)
+		self.dropout1 = nn.Dropout(p_drop)
 
 
-	def forward(self, X, sentence_lengths):
-		"""
-		Args:
-			X: shape of (n_examples, in_channels, n_features)
-			sentence_lengths = shape of (n_examples, 1, 1)
+	def forward(self, x, conv_len_mask):
+		# print('______-_____')
+		# print(x)
+		# print(conv_len_mask)
 
-		Returns:
-			x: Pytorch variable of shape 
-				(n_examples, 1, n_features)
-		"""
-		# TODO: apply batch normalization ???
-		print('______-_____')
-		print(X)
-		print(X.size())
-		x = self.conv1(X)
-		print(x)
-		print(x.size())
-		sum1 = torch.sum(x, dim=1)
-		print(sum1)
-		print(sum1.size())
-		lengths = sentence_lengths.repeat(1, sum1.size()[1])
-		print(lengths)
-		print(lengths.size())
-		
-		x = sum1.div(lengths)
-		print(x)
+		x = self.conv1(x)
+		# print(x)
+
+		x = torch.mul(x, conv_len_mask)
+		# print(x)
+
+		x = torch.sum(x, dim=2)
+		# print(x)
+
+		x = self.dropout1(x)
+
 		x = F.tanh(x)
-		print(x)
-		print('______^______')
+		# print(x)
+
+		# print('______^______')
 		return x
 
 
@@ -83,121 +77,115 @@ class Net(nn.Module):
 class CNNTrainer:
 	"""
 	"""
-	def __init__(self, batch_size, lr, l2_norm, delta, debug=False):
+	def __init__(self, batch_size, lr, delta, debug=False):
 		self.batch_size = batch_size
 		self.lr = lr
-		self.l2_norm = l2_norm
 		self.delta = delta
 		self.debug = debug
 		SENTENCE_LENGTHS = 100
 
-	def get_loss_data(self, train_instances):
-		loss_data = []
-		for instance in train_instances:
+		self.conv_net_cell = Net()
+		self.preprocessor = PreConv(self.debug)
 
-			# rep of question of interest and positive candidate
-			h_q = instance[0]
-			h_p = instance[1]
+	def get_cosine_scores_target_data(self, train_instances):
+		cosine_scores = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in train_instances]
+		cosine_scores = torch.stack(cosine_scores, 1).t()
 
-			# score of positive candidate
-			s_p = F.cosine_similarity(h_q, h_p, 0)
-			scores = [s_p - s_p]
+		print(cosine_scores.t())
 
-			# scores of negatives
-			for i in range(2, len(instance)):
-				h_n = instance[i]
+		target_data = [0 for inst in range(len(train_instances))]
+		target_data = Variable(torch.LongTensor(target_data))
+		return cosine_scores, target_data
 
-				score = F.cosine_similarity(h_q, h_n, 0) - s_p + self.delta
-				scores.append(score)
+	def get_mini_mask(self, seq_len, out_channels=64, max_seq_len=100):
+		n = min(max_seq_len, seq_len)
+		mask = torch.cat( (torch.ones(n) * 1.0/n, torch.zeros(max_seq_len - n)) ).repeat(out_channels, 1)
+		mask = Variable(torch.FloatTensor(mask), requires_grad = False)
+		return mask
 
-			loss_data.append(torch.cat(scores, 0))
-		loss_data = torch.stack(loss_data, 1)
-		return loss_data
+	def get_mask(self, lens, out_channels=64, max_seq_len=100):
+		mask = [self.get_mini_mask(len) for len in lens]
+		mask = torch.stack(mask)
+		return mask
 
 	def run_through_model(self, x, lens):
 		# run the model on the title/body
 		x = torch.stack(x)
 		x = torch.transpose(x, 1, 2)
 		# need the length of each text to average later
-		lens = Variable(torch.FloatTensor(lens), requires_grad=False)
-		lens.resize(lens.size()[0], 1)
-		return conv_net_cell(x, lens)
+		conv_mask = self.get_mask(lens)
+		return self.conv_net_cell(x, conv_mask)
+
+	def sequences_to_input_vecs(self, sequences):
+		return [self.preprocessor.sequence_to_vec(seq) for seq in sequences]
+
+	def sequences_to_len_masks(self, sequences):
+		return [self.preprocessor.get_seq_len(seq) for seq in sequences]
 		
 
-	def train(self, conv_net_cell):
+	def train(self):
 		print('pre-processing . . .')
-		preprocessor = PreConv(self.debug)
-		questions = preprocessor.get_question_dict()
-		candidate_ids = preprocessor.get_candidate_ids()
+		vector_dict = self.preprocessor.get_word_to_vector_dict()
+		questions = self.preprocessor.get_question_dict()
+		candidate_ids = self.preprocessor.get_candidate_ids()
 
 		#gettings the batches as ids (not yet the actual data)
-		id_batches = preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
+		id_batches = self.preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
 
 
 		print('setting up model . . .')
-		
+		mml = nn.MultiMarginLoss()
 		optimizer = optim.Adam(
-			params=conv_net_cell.parameters(),
-			lr=self.lr, 
-			weight_decay=self.l2_norm)
+			params=self.conv_net_cell.parameters(),
+			lr=self.lr)
 
 		i_batch = -1
 		for id_batch in id_batches:
 			i_batch += 1
 			batch_loss = 0
+
+			title_seqs, body_seqs = [], []
 			for q_id in id_batch:
-				optimizer.zero_grad()
-				question_title, question_body, q_len_title, q_len_body = questions[q_id]
+				
+				question_title_seq, question_body_seq = questions[q_id]
 
 				pos_id = random.choice(candidate_ids[q_id][0])
 
-				pos_title, pos_body, pos_len_title, pos_len_body = questions[pos_id]
-
-				neg_titles = [questions[n][0] for n in candidate_ids[q_id][1]]
-				neg_bodies = [questions[n][1] for n in candidate_ids[q_id][1]]
-				neg_len_titles = [questions[n][2] for n in candidate_ids[q_id][1]]
-				neg_len_bodies = [questions[n][3] for n in candidate_ids[q_id][1]]
-
-
-				x_titles = [question_title, pos_title]
-				x_titles.extend(neg_titles)
-				x_lens_titles = [q_len_title, pos_len_title]
-				x_lens_titles.extend(neg_len_titles)
-
-				x_bodies = [question_body, pos_body]
-				x_bodies.extend(neg_bodies)
-				x_lens_bodies = [q_len_body, pos_len_body]
-				x_lens_bodies.extend(neg_len_bodies)
-
-				# run the model on the bodies
-				output_titles = self.run_through_model(
-					x_titles, x_lens_titles)
-				output_bodies = self.run_through_model(
-					x_bodies, x_lens_bodies)
+				pos_title_seq, pos_body_seq = questions[pos_id]
+				neg_title_seqs = [questions[n][0] for n in candidate_ids[q_id][1]]
+				neg_body_seqs = [questions[n][1] for n in candidate_ids[q_id][1]]
 				
+				# put all sequences together
+				title_seqs.extend([question_title_seq] + [pos_title_seq] + neg_title_seqs)
+				body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
 
-				# average the two for each corresponding question
-				out_avg = (output_titles + output_bodies).div(2)				
-				
-				# run the output through the loss
-				# loss = mm_loss(out_avg)
-				train_instances = torch.chunk(out_avg, self.batch_size)
-				loss_data = self.get_loss_data(train_instances)
-				targets = Variable(torch.LongTensor(
-					[0 for i in range(len(loss_data))]), 
-					requires_grad=True)
 
-				mml = nn.MultiMarginLoss()
-				loss = mml(loss_data, targets)
+			# get all the word embedding vectors
+			x_titles, x_bodies = self.sequences_to_input_vecs(title_seqs), self.sequences_to_input_vecs(body_seqs)
+			
+			# get the lengths of all the sequences
+			lens_titles, lens_bodies = self.sequences_to_len_masks(title_seqs), self.sequences_to_len_masks(body_seqs)
+			
+			# run the model on the bodies
+			output_titles = self.run_through_model(x_titles, lens_titles)
+			output_bodies = self.run_through_model(x_bodies, lens_bodies)
+			
+			# average the two for each corresponding question
+			out_avg = (output_titles + output_bodies).div(2)				
+			
+			# run the output through the loss
+			train_instances = torch.chunk(out_avg, self.batch_size)
+			cos_scores, targets = self.get_cosine_scores_target_data(train_instances)
 
-				# back propagate the errors
-				loss.backward()
-				print(loss)
-				batch_loss += loss
-				optimizer.step()
-			assert False
+			loss = mml(cos_scores, targets)
 
-			print('batch %s loss = %s'%(str(i_batch), str(batch_loss)))
+			# back propagate the errors
+			optimizer.zero_grad()
+			loss.backward()
+			nn.utils.clip_grad_norm(self.conv_net_cell.parameters(), 5)
+			optimizer.step()
+
+			print('batch %s loss = %s'%(str(i_batch), str(loss)))
 
 		torch.save(conv_net_cell.state_dict(), 'model_cnn_v1.pt')
 
@@ -207,16 +195,14 @@ class CNNTrainer:
 debug=True
 torch.manual_seed(1)
 random.seed(1)
-BATCH_SIZE = 1
-LEARNING_RATE = .00001
-L2_NORM = .00001
-DELTA = 1.0 # is was 0.0001 earlier
+BATCH_SIZE = 16
+LEARNING_RATE = .0000001
+DELTA = 0.01 # is was 0.0001 earlier
 # BATCH_SIZE = 64
 
 # getting data before batches
-trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, DELTA, debug)
-conv_net_cell = Net()
-trainer.train(conv_net_cell)
+trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, debug)
+trainer.train()
 
 
 ## nn.utils.clip_grad_norm(net.parameters(), 10)
