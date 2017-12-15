@@ -48,8 +48,8 @@ class CNN_Net(nn.Module):
 		self.conv1 = nn.Conv1d(
 			in_channels = 200,
 			out_channels = self.out_channels,
-			kernel_size = 7, 
-			padding = 3
+			kernel_size = 5, 
+			padding = 2
 		)
 		self.dropout1 = nn.Dropout(self.p_drop)
 
@@ -355,6 +355,27 @@ if __name__ == '__main__':
 			save_model_path, load_model_path, DEBUG, DROPOUT)
 		trainer.train()
 
+
+
+
+
+	# # after epoch 4
+	# training for 15.688509 minutes so far
+	# training on track to take 15.964627 minutes
+
+	# DEV
+
+	# MAP 0.452442136527
+	# MRR 0.578562564945
+	# P@1 0.428571428571
+	# P@5 0.359788359788
+
+	# TEST
+
+	# MAP 0.40801480879
+	# MRR 0.496276377506
+	# P@1 0.306451612903
+	# P@5 0.309677419355
 
 
 

@@ -10,13 +10,14 @@ import random
 from eval_cnn import Evaluation
 import time
 
-from qr_cnn import CNN_Net, CNN_Model, CNN_Evaluator
+from qr_cnn import CNN_Net
 from discriminator import Discriminator
 
-from qr_lstm import 
+# from qr_lstm import ######################################### TODO FOR LSTM
 
 import adversary_params as params
-from pre_adversary import PreAdversary
+from pre_android import PreAndroid
+from adversary_evaluator import AdversaryEvaluator
 
 
 
@@ -28,7 +29,7 @@ class AdversaryTrainer:
 			self.encoder_net = torch.load(params.load_encoder_path)
 
 
-		self.discr_input_size = self.get_disc_input_size()
+		self.discr_input_size = self.get_discr_input_size()
 
 		if params.load_discr_path == '':
 			self.discr_net = Discriminator(self.discr_input_size, params.discr_hidden_size)
@@ -45,13 +46,11 @@ class AdversaryTrainer:
 		if params.encoder_type == 'cnn':
 			return CNN_Net(params.cnn_out_channels, params.dropout)
 		elif params.encoder_type == 'lstm':
-			return None ############################ TODO FOR LSTM
+			return None ###################################################################### TODO IMPLEMENT FOR LSTM
 
 
 	def get_discr_input_size(self):
-		# TODO
-
-		pass
+		return self.get_total_questions_per_batch() * params.cnn_out_channels
 
 	def get_ub_title_and_body_seqs(self, questions, candidate_ids, ids_batch):
 		title_seqs, body_seqs = [], []
@@ -70,6 +69,14 @@ class AdversaryTrainer:
 			body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
 		return title_seqs, body_seqs
 
+
+	def get_an_title_and_body_seqs(self, questions, ids_batch):
+		title_seqs, body_seqs = [], []
+		for id_batch in ids_batch:
+			title_seqs.extend([questions[q_id][0] for q_id in id_batch])
+			body_seqs.extend([questions[q_id][1] for q_id in id_batch])
+		return title_seqs, body_seqs
+
 	def get_cosine_scores_target_data(self, train_instances):
 		cosine_scores = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in train_instances]
 		cosine_scores = torch.stack(cosine_scores, 1).t()
@@ -79,46 +86,54 @@ class AdversaryTrainer:
 		return cosine_scores, target_data
 
 	def get_total_questions_per_batch(self):
-		TODO
-		# and make sure the number of questions for ubuntu batches
-		#    and for android batches is equal --> probably a multiple of 22 ??
-		pass
+		ub_num_questions_per_batch = params.batch_size * 22
+		return ub_num_questions_per_batch * 2 # android batch is the same size
 
 
-	def run_through_encoder(self, x_titles, lens_titles):
-		TODO
-		# model off of run_through_model() in CNN_Trainer
-		pass
+	def run_through_encoder(self, x, lens):
+		if params.encoder_type == 'cnn':
+			return self.run_through_cnn(x, lens)
+		elif params.encoder_type == 'lstm':
+			return self.run_through_lstm(x, lens)
 
-	def run_through_discr(self, both_out_avg):
-		TODO
-		pass
+	def run_through_cnn(self, x, lens):
+		# run the model on the title/body
+		x = torch.stack(x)
+		x = torch.transpose(x, 1, 2)
+		# need the length of each text to average later
+		conv_mask = self.get_mask(lens, self.out_channels)
+		return self.encoder_net(x, conv_mask)
 
+	def run_through_lstm(self, x, lens):
+		##################################################################################### TODO: IMPLEMENT FOR LSTM!
+		return
+		
+
+	def run_through_discr(self, both_out_avg): 
+		size = both_out_avg.size()
+		both_out_avg.resize_(size[0], size[1] * size[2])
+		return self.discr_net(both_out_avg)
 
 	def train(self):
 		# get the ubuntu data (labeled ub)
 		ub_questions = self.ub_preprocessor.get_question_dict()
 		ub_candidate_ids = self.ub_preprocessor.get_candidate_ids()
 
-		TODO __ FIX THE UB BATCHES TO BE THE SAME SIZE AS AN BATCHES
-		ub_ids_batches = self.ub_preprocessor.split_into_batches(ub_candidate_ids.keys(), self.batch_size / 2)
+		ub_ids_batches = self.ub_preprocessor.split_into_batches(ub_candidate_ids.keys(), params.batch_size)
 
 		# get the android data (labeled an)
 		an_questions = self.an_preprocessor.get_question_dict()
-		an_id_pairs = an_preprocessor.get_all_id_pairs()
+		an_id_pairs = self.an_preprocessor.get_all_id_pairs()
 		
 		# batch the ids
-		TODO __ FIX THE AN BATCHES TO BE THE SAME SIZE AS UB BATCHES
-		an_ids_batches = self.an_preprocessor.split_into_batches(
-			an_pos_id_pairs, an_neg_id_pairs, params.batch_size)
-
+		an_ids_batches = self.an_preprocessor.split_into_batches(an_id_pairs)
 
 		# discriminator labels (ubuntu --> 0, android --> 1)
 		# when forwarding thru discriminator, first half if ubuntu, second half if android
 		total_questions_per_batch = self.get_total_questions_per_batch()
-		discr_targets = torch.cat(
+		discr_targets = torch.cat([
 			torch.ones(total_questions_per_batch / 2), 
-			torch.zeros(total_questions_per_batch / 2))
+			torch.zeros(total_questions_per_batch / 2)])
 		discr_targets = Variable(torch.FloatTensor(discr_targets), requires_grad = False)
 
 		# loss for classifier
@@ -133,7 +148,7 @@ class AdversaryTrainer:
 
 		optimizer2 = optim.Adam(
 			[
-				{'params':self.encoder_net.parameters(), 'lr': params.backward_lr}, 
+				{'params':self.encoder_net.parameters(), 'lr': params.neg_lr}, 
 				{'params':self.discr_net.parameters()}
 			],
 			lr=params.forward_lr)
@@ -152,7 +167,7 @@ class AdversaryTrainer:
 			ub_title_seqs, ub_body_seqs = self.get_ub_title_and_body_seqs(
 				ub_questions, ub_candidate_ids, ub_ids_batch)
 			an_title_seqs, an_body_seqs = self.get_an_title_and_body_seqs(
-				an_questions, ub_)
+				an_questions, an_ids_batch)
 
 			# get all the word embedding vectors
 			ub_x_titles = self.sequences_to_input_vecs(ub_title_seqs)
@@ -192,6 +207,9 @@ class AdversaryTrainer:
 			
 			# concatenate both ub and an
 			both_out_avg = torch.cat(ub_out_avg, an_out_avg)
+
+			# flatten for discriminator (has fc1 layer)
+
 
 			# run through discriminator
 			out_discr = self.run_through_discr(both_out_avg)

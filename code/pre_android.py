@@ -1,4 +1,4 @@
-from future import print_function
+from __future__ import print_function
 import torch
 import numpy as np
 from torch.autograd import Variable
@@ -14,15 +14,32 @@ class PreAndroid:
         self.vectors_path = params.glove_vecs_path
         self.tokens_path = params.andr_tokens_path
 
-        self.blank_vec = [0.0] * TODO# TODO TODO --> GET GLOVE EMB SIZE HERE 
+        self.blank_vec = [0.0] * params.glove_vecs_n_channels 
         self.word_to_vector = self.get_word_to_vector_dict()
         self.vocab = set(self.word_to_vector.keys())
 
 
-    def split_into_batches(self, pos_id_pairs, neg_id_pairs, batch_size):
-        TODO --> make sure this batch has the same number of questions as the
-        ubuntu batch
-        pass
+    def split_into_batches(self, id_pairs):
+        actual_batch_size = params.batch_size * 22
+        actual_batch_size /= 2 # because each elem in id_pairs has 2 questions
+
+        div = int(len(id_pairs) / actual_batch_size)
+        rem = len(id_pairs) % actual_batch_size
+
+        batches = []
+        for i in xrange(0, len(id_pairs) - rem, actual_batch_size):
+            pairs_batch  = id_pairs[i:i+actual_batch_size]
+            elem0_batch = [elem[0] for elem in pairs_batch]
+            elem1_batch = [elem[1] for elem in pairs_batch]
+
+            batch = elem0_batch + elem1_batch
+            batches.append(batch)
+
+            assert len(batch) == actual_batch_size * 2
+
+        # batches[-1] = batches[-1] + data[len(data) - batch_size + 1:]
+
+        return batches
 
 
     def get_word_to_vector_dict(self): 
@@ -39,9 +56,6 @@ class PreAndroid:
             word = split[0]
 
             vec = [float(val) for val in split[1:]]
-            print('vector length is')
-            print(len(vec))
-            assert False
 
             word_to_vector[word] = vec
 
@@ -67,10 +81,10 @@ class PreAndroid:
         return id_pairs
 
     def get_all_id_pairs(self):
-        dev_pos = get_id_pairs(self, is_pos=True, dev_or_test='dev')
-        dev_neg = get_id_pairs(self, is_pos=False, dev_or_test='dev')
-        test_pos = get_id_pairs(self, is_pos=True, dev_or_test='test')
-        test_neg = get_id_pairs(self, is_pos=False, dev_or_test='test')
+        dev_pos = self.get_id_pairs(is_pos=True, dev_or_test='dev')
+        dev_neg = self.get_id_pairs(is_pos=False, dev_or_test='dev')
+        test_pos = self.get_id_pairs(is_pos=True, dev_or_test='test')
+        test_neg = self.get_id_pairs(is_pos=False, dev_or_test='test')
 
         id_pairs = dev_pos + dev_neg + test_pos + test_neg
         random.shuffle(id_pairs)
