@@ -41,15 +41,15 @@ class CNN_Net(nn.Module):
 	"""
 	"""
 	def __init__(self, out_channels, p_drop=0.3):
-		super(Net, self).__init__()
+		super(CNN_Net, self).__init__()
 		self.out_channels = out_channels
 		# conv layer
 		self.p_drop = p_drop
 		self.conv1 = nn.Conv1d(
 			in_channels = 200,
 			out_channels = self.out_channels,
-			kernel_size = 5, 
-			padding = 2
+			kernel_size = 7, 
+			padding = 3
 		)
 		self.dropout1 = nn.Dropout(self.p_drop)
 
@@ -227,10 +227,27 @@ class CNNTrainer(CNNModel):
 
 		self.preprocessor = PreConv(debug=self.debug)
 		self.evaluator = CNNEvaluator(self.out_channels)
+
+	def get_title_and_body_seqs(self, questions, candidate_ids, ids_batch):
+		title_seqs, body_seqs = [], []
+		for q_id in ids_batch:
+			
+			question_title_seq, question_body_seq = questions[q_id]
+
+			pos_id = random.choice(candidate_ids[q_id][0])
+
+			pos_title_seq, pos_body_seq = questions[pos_id]
+			neg_title_seqs = [questions[n][0] for n in candidate_ids[q_id][1]]
+			neg_body_seqs = [questions[n][1] for n in candidate_ids[q_id][1]]
+			
+			# put all sequences together
+			title_seqs.extend([question_title_seq] + [pos_title_seq] + neg_title_seqs)
+			body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
+		return title_seqs, body_seqs
+
 		
 
 	def train(self):
-		# vector_dict = self.preprocessor.get_word_to_vector_dict()
 		questions = self.preprocessor.get_question_dict()
 		candidate_ids = self.preprocessor.get_candidate_ids()
 
@@ -248,23 +265,9 @@ class CNNTrainer(CNNModel):
 		total_time = 0.0
 		for ids_batch in id_batches:
 			i_batch += 1
-			batch_loss = 0
 
-			title_seqs, body_seqs = [], []
-			for q_id in ids_batch:
-				
-				question_title_seq, question_body_seq = questions[q_id]
-
-				pos_id = random.choice(candidate_ids[q_id][0])
-
-				pos_title_seq, pos_body_seq = questions[pos_id]
-				neg_title_seqs = [questions[n][0] for n in candidate_ids[q_id][1]]
-				neg_body_seqs = [questions[n][1] for n in candidate_ids[q_id][1]]
-				
-				# put all sequences together
-				title_seqs.extend([question_title_seq] + [pos_title_seq] + neg_title_seqs)
-				body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
-
+			# get the input sequences
+			title_seqs, body_seqs = self.get_title_and_body_seqs(questions, candidate_ids, ids_batch)
 
 			# get all the word embedding vectors
 			x_titles, x_bodies = self.sequences_to_input_vecs(title_seqs), self.sequences_to_input_vecs(body_seqs)
@@ -272,11 +275,11 @@ class CNNTrainer(CNNModel):
 			# get the lengths of all the sequences
 			lens_titles, lens_bodies = self.sequences_to_len_masks(title_seqs), self.sequences_to_len_masks(body_seqs)
 			
-			# run the model on the bodies
+			# run the data forward through the model 
 			output_titles, output_bodies = self.run_through_model(x_titles, lens_titles), self.run_through_model(x_bodies, lens_bodies)
 			
 			# average the two for each corresponding question
-			out_avg = (output_titles + output_bodies).div(2)				
+			out_avg = (output_titles + output_bodies).div(2)	
 			
 			# run the output through the loss
 			train_instances = torch.chunk(out_avg, len(ids_batch))
@@ -299,10 +302,10 @@ class CNNTrainer(CNNModel):
 				print('---------------------------------------------|------------------|')
 
 
-				delta_time = time.time() - last_time 
-				time_per_question = delta_time / (self.batch_size * mod_size)
-				print('training is taking %f seconds per question'
-					%( time_per_question ))
+				# delta_time = time.time() - last_time 
+				# time_per_question = delta_time / (self.batch_size * mod_size)
+				# print('training is taking %f seconds per question'
+				# 	%( time_per_question ))
 				
 				total_time = time.time() - start_time
 				print('training for %f minutes so far'
@@ -323,26 +326,29 @@ class CNNTrainer(CNNModel):
 
 
 if __name__ == '__main__':
+	models_dir = '../saved_models/'
 	
 
-
-	# v3 model
+	# v5 model 
+	# --> this is the first model with 
+	#     conv kernel size == 7 instead of 5 or 3
+	version_num = 5
 	n_epochs = 10
 	for i_epoch in range(n_epochs):
-		print('epoch %d out of %d epochs, for model version 3'
+		print('epoch %d out of %d epochs, for model version 4'
 			%(i_epoch+1, n_epochs))
-		save_model_path = 'model_cnn_v3_epoch.pt'
+		save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
 		if i_epoch == 0: load_model_path = ''
-		else: load_model_path = 'model_cnn_v3_epoch.pt'
+		else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
 		
 		DEBUG = False
-		torch.manual_seed(1)
-		random.seed(1)
-		BATCH_SIZE = 3
-		LEARNING_RATE = .0001
-		DELTA = 1.0 # is was 0.0001 earlier
-		OUT_CHANNELS = 200
-		DROPOUT = 0.2
+		torch.manual_seed(7)
+		random.seed(7)
+		BATCH_SIZE = 5
+		LEARNING_RATE = .00001
+		DELTA = 0.1
+		OUT_CHANNELS = 150
+		DROPOUT = 0.3
 
 		# getting data before batches
 		trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
@@ -355,8 +361,144 @@ if __name__ == '__main__':
 
 
 
+############################################################################
+
+	# # v4 model 
+	# # --> this is the first model with 
+	# #     conv kernel size == 3 instead of 5
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version 4'
+	# 		%(i_epoch+1, n_epochs))
+	# 	save_model_path = models_dir + 'model_cnn_v4.pt'
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v4.pt'
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 3
+	# 	LEARNING_RATE = .0001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.2
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
 
 
+
+	# epoch 5 of version 4
+
+	# training is taking 0.053204 seconds per question
+	# training for 10.628970 minutes so far
+	# training on track to take 11.269366 minutes
+
+	# DEV
+
+	# MAP 0.459988345899
+	# MRR 0.571518809544
+	# P@1 0.380952380952
+	# P@5 0.356613756614
+
+	# TEST
+
+	# MAP 0.425791483675
+	# MRR 0.528413060547
+	# P@1 0.370967741935
+	# P@5 0.330107526882
+
+
+
+
+
+
+
+
+
+
+
+
+#######################################################################
+
+
+
+
+
+
+
+
+
+	# # v3 model
+	# n_epochs = 3
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version 3'
+	# 		%(i_epoch+1, n_epochs))
+	# 	save_model_path = models_dir + 'model_cnn_v3_post_epoch13.pt'
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v3_post_epoch13.pt'
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(1)
+	# 	random.seed(1)
+	# 	BATCH_SIZE = 3
+	# 	LEARNING_RATE = .000001
+	# 	DELTA = 1.0 # is was 0.0001 earlier
+	# 	OUT_CHANNELS = 200
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+	# V3 on epoch 16 ish
+
+	# training is taking 0.068564 seconds per question
+	# training for 13.684439 minutes so far
+	# training on track to take 14.508926 minutes
+
+	# DEV
+
+	# MAP 0.450649629339
+	# MRR 0.559807960135
+	# P@1 0.380952380952
+	# P@5 0.353439153439
+
+	# TEST
+
+	# MAP 0.449834048749
+	# MRR 0.569960228882
+	# P@1 0.403225806452
+	# P@5 0.34623655914
+
+	# V3 on epoch 13 ish
+	
+	# training is taking 0.072794 seconds per question
+	# training for 14.798071 minutes so far
+	# training on track to take 15.689655 minutes
+
+	# DEV
+
+	# MAP 0.450649629339
+	# MRR 0.559807960135
+	# P@1 0.380952380952
+	# P@5 0.353439153439
+
+	# TEST
+
+	# MAP 0.449834048749
+	# MRR 0.569960228882
+	# P@1 0.403225806452
+	# P@5 0.34623655914
+
+
+
+
+#######################################################################
 
 
 	# # v2 model
@@ -364,9 +506,9 @@ if __name__ == '__main__':
 	# for i_epoch in range(n_epochs):
 	# 	print('epoch %d out of %d epochs, for model version 2'
 	# 		%(i_epoch+1, n_epochs))
-	# 	save_model_path = 'model_cnn_v2_epoch%d.pt'%(i_epoch+1)
+	# 	save_model_path = models_dir + 'model_cnn_v2_epoch%d.pt'%(i_epoch+1)
 	# 	if i_epoch == 0: load_model_path = ''
-	# 	else: load_model_path = 'model_cnn_v2_epoch%d.pt'%(i_epoch)
+	# 	else: load_model_path = models_dir + 'model_cnn_v2_epoch%d.pt'%(i_epoch)
 		
 	# 	DEBUG = False
 	# 	torch.manual_seed(1)
@@ -411,20 +553,14 @@ if __name__ == '__main__':
 
 
 
-
-
-
-
-
-
-
+################################################################
 
 
 
 
 	## V1 model
-	# save_model_path = 'model_cnn_v1_epoch4.pt'
-	# load_model_path = 'model_cnn_v1_epoch3.pt'
+	# save_model_path = models_dir + 'model_cnn_v1_epoch4.pt'
+	# load_model_path = models_dir + 'model_cnn_v1_epoch3.pt'
 	
 	# DEBUG = False
 	# torch.manual_seed(1)

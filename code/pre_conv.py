@@ -1,6 +1,8 @@
+from __future__ import print_function
 import torch
 import numpy as np
 from torch.autograd import Variable
+import random
 
 """
 For use in converting sequences of words into sequences of their vector representations
@@ -80,11 +82,9 @@ class PreConv:
         return word_to_vector
 
     def get_question_dict(self):
-        # create the question dictionary
         f = open(self.tokens_path, 'r')
         
         id_to_question = {}
-        pos_indicies = {}
         for line in f.readlines():
             split = line.strip().split("\t")
 
@@ -127,7 +127,7 @@ class PreConv:
             positive = split[1].split()
             
             if self.data_type == 'train':
-                negative = split[2].split(' ')[:20]
+                negative = random.sample(split[2].split(' '), 20)
                 assert len(negative) == 20
                 question_to_candidates[question] = (positive, negative)
             
@@ -157,3 +157,6 @@ class PreConv:
 
         f.close()
         return positive_indices
+
+
+
