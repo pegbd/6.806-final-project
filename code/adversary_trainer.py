@@ -7,7 +7,6 @@ import numpy as np
 from pre_conv import PreConv
 import random
 
-from eval_cnn import Evaluation
 import time
 
 from qr_cnn import CNN_Net
@@ -17,8 +16,6 @@ from discriminator import Discriminator
 
 import adversary_params as params
 from pre_android import PreAndroid
-from adversary_evaluator import AdversaryEvaluator
-
 
 
 class AdversaryTrainer:
@@ -41,8 +38,6 @@ class AdversaryTrainer:
 			vectors_path=params.glove_vecs_path, 
 			emb_channels=params.glove_vecs_n_channels)
 		self.an_preprocessor = PreAndroid(debug=params.debug)
-
-		self.evaluator = AdversaryEvaluator()
 
 
 	def get_new_encoder_net(self):
@@ -150,7 +145,7 @@ class AdversaryTrainer:
 
 		optimizer2 = optim.Adam(
 			[
-				{'params':self.encoder_net.parameters(), 'lr': params.neg_lr}, 
+				{'params':self.encoder_net.parameters(), 'lr': params.lambda_reg * params.neg_lr}, 
 				{'params':self.discr_net.parameters()}
 			],
 			lr=params.forward_lr)
@@ -209,9 +204,6 @@ class AdversaryTrainer:
 			# concatenate both ub and an
 			both_out_avg = torch.cat([ub_out_avg, an_out_avg])
 
-			# flatten for discriminator (has fc1 layer) ########### not sure if I have to do this actually...
-
-
 			# run through discriminator
 			out_discr = self.run_through_discr(both_out_avg)
 
@@ -234,7 +226,7 @@ class AdversaryTrainer:
 			optimizer2.step()
 
 
-			mod_size = 100.0
+			mod_size = 1000.0
 
 			i_batch_print = i_batch + 1
 			if (i_batch_print % mod_size) == 0:
@@ -254,9 +246,12 @@ class AdversaryTrainer:
 
 				last_time = time.time()
 
-		self.evaluator.evaluate()
 		torch.save(self.encoder_net, params.save_encoder_path)
 		torch.save(self.discr_net, params.save_discr_path)
+		print('models saved at %s and %s'%(params.save_encoder_path, params.save_discr_path))
+
+
+
 
 
 
@@ -265,8 +260,13 @@ if __name__ == '__main__':
 	torch.manual_seed(1)
 	random.seed(1)
 
-	trainer = AdversaryTrainer()
-	trainer.train()
+	# trainer = AdversaryTrainer()
+	# trainer.train()
+
+
+	# evaluator = AdversaryEvaluator()
+	# evaluator.evaluate('dev')
+	# evaluator.evaluate('test')
 
 
 

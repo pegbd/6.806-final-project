@@ -41,6 +41,37 @@ class PreAndroid:
 
         return batches
 
+    def eval_split_into_batches(self, is_pos, dev_or_test):
+        id_pairs = self.get_id_pairs(is_pos, dev_or_test)
+
+        actual_batch_size = params.batch_size * 22
+        actual_batch_size /= 2 # because each elem in id_pairs has 2 questions
+
+        div = int(len(id_pairs) / actual_batch_size)
+        rem = len(id_pairs) % actual_batch_size
+
+        left_batches, right_batches = [], []
+        for i in xrange(0, len(id_pairs) - rem, actual_batch_size):
+            pairs_batch  = id_pairs[i:i+actual_batch_size]
+            elem0_batch = [elem[0] for elem in pairs_batch]
+            elem1_batch = [elem[1] for elem in pairs_batch]
+
+            left_batches.append(elem0_batch)
+            right_batches.append(elem1_batch)
+
+            # assert len(batch) == actual_batch_size * 2
+
+        # batches[-1] = batches[-1] + data[len(data) - batch_size + 1:]
+        # instead _
+        # append the remainder as a separate batch
+        pairs_batch  = id_pairs[len(id_pairs) - actual_batch_size + 1:]
+        elem0_batch = [elem[0] for elem in pairs_batch]
+        elem1_batch = [elem[1] for elem in pairs_batch]
+        left_batches.append(elem0_batch)
+        right_batches.append(elem1_batch)
+
+        return left_batches, right_batches
+
 
     def get_word_to_vector_dict(self): 
         # create the word_to_vector dictionary
