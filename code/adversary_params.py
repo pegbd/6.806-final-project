@@ -3,12 +3,12 @@ from __future__ import print_function
 
 
 # cnn (encoder) network params
-cnn_out_channels = 200
+cnn_out_channels = 64
 dropout = 0.3
 delta = 1.0
 forward_lr = 0.00001
 
-save_encoder_path = '..saved_models/model_adversary_cnn_v1.pt'
+save_encoder_path = '../saved_models/model_adversary_cnn_v1.pt'
 load_encoder_path = ''
 
 
@@ -32,7 +32,7 @@ glove_vecs_n_channels = 300
 neg_lr = -1.0 * forward_lr
 discr_hidden_size = 200
 
-save_discr_path = '..saved_models/model_adversary_discr_v1.pt'
+save_discr_path = '../saved_models/model_adversary_discr_v1.pt'
 load_discr_path = ''
 
 
@@ -40,9 +40,9 @@ load_discr_path = ''
 encoder_type = 'cnn'
 n_epochs = 1
 batch_size = 2
-lambda_reg = 1.0 # the regularization parameter for loss2 when computing the total loss
+lambda_reg = 0.001 # the regularization parameter for loss2 when computing the total loss
 
 
 
-debug = True
+debug = False
 if debug: print('debug is True')

@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 import random
+import string
 
 """
 For use in converting sequences of words into sequences of their vector representations
@@ -13,15 +14,19 @@ Takes in data from ../askubuntu-master/vector/vectors_pruned.200.txt
 class PreConv:
     """
     """
-    def __init__(self, data_type='train', debug=False):
+    def __init__(self, data_type='train', debug=False, vectors_path='', emb_channels=200):
         """
         data_type: must be one of: 'train', 'dev', or 'test'
             is 'train' by default.
         """
         self.data_type = data_type
         self.debug = debug
+        self.vectors_path = vectors_path
+        self.emb_channels = emb_channels
 
-        self.vectors_path = '../askubuntu-master/vector/vectors_pruned.200.txt'
+        if self.vectors_path == '':
+            self.vectors_path = '../askubuntu-master/vector/vectors_pruned.200.txt'
+        else: self.vectors_path = vectors_path
         self.tokens_path = '../askubuntu-master/text_tokenized.txt'
         if data_type == 'train':
             self.data_path = '../askubuntu-master/%s_random.txt'%(data_type)
@@ -29,7 +34,7 @@ class PreConv:
             self.data_path = '../askubuntu-master/%s.txt'%(data_type)
 
 
-        self.blank_vec = [0.0] * 200
+        self.blank_vec = [0.0] * self.emb_channels
         self.word_to_vector = self.get_word_to_vector_dict()
         self.vocab = set(self.word_to_vector.keys())
 
@@ -48,15 +53,17 @@ class PreConv:
 
 
     def split_into_batches(self, data, batch_size):
+        actual_batch_size = batch_size
         batches = []
         div = int(len(data) / batch_size)
         rem = len(data) % batch_size
 
         for i in xrange(0, len(data) - rem, batch_size):
             batch = data[i:i+batch_size]
+            assert len(batch) == actual_batch_size
             batches.append(batch)
 
-        batches[-1] = batches[-1] + data[len(data) - batch_size + 1:]
+        # batches[-1] = batches[-1] + data[len(data) - batch_size + 1:]
 
         return batches
 
@@ -81,7 +88,7 @@ class PreConv:
         f.close()
         return word_to_vector
 
-    def get_question_dict(self):
+    def get_question_dict(self, force_lowercase=True):
         f = open(self.tokens_path, 'r')
         
         id_to_question = {}
@@ -90,9 +97,12 @@ class PreConv:
 
             id_num = split[0].strip()
             title = split[1].strip()
-            body = split[2].strip() if len(split) == 3 else None
+            body = split[2].strip() if len(split) == 3 else ''
 
-            id_to_question[id_num] = (title, body)
+            if force_lowercase:
+                id_to_question[id_num] = (title.lower(), body.lower())
+            else:
+                id_to_question[id_num] = (title, body)
 
         f.close()
         return id_to_question

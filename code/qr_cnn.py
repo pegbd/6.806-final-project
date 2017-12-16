@@ -40,24 +40,35 @@ import time
 class CNN_Net(nn.Module):
 	"""
 	"""
-	def __init__(self, out_channels, p_drop=0.3):
+	def __init__(self, out_channels, p_drop=0.3, in_channels=200):
 		super(CNN_Net, self).__init__()
 		self.out_channels = out_channels
+		self.in_channels = in_channels
 		# conv layer
 		self.p_drop = p_drop
 		self.conv1 = nn.Conv1d(
-			in_channels = 200,
+			in_channels = self.in_channels,
 			out_channels = self.out_channels,
 			kernel_size = 5, 
 			padding = 2
 		)
+		self.batch_norm = nn.BatchNorm1d(self.out_channels)
 		self.dropout1 = nn.Dropout(self.p_drop)
+
+		self.max_seq_len = 100
 
 
 	def forward(self, x, conv_len_mask):
 		x = self.conv1(x)
 		x = torch.mul(x, conv_len_mask)
 		x = torch.sum(x, dim=2)
+		################################	batch norm layer added after version 6
+		x = self.batch_norm(x)
+
+
+		################################ 
+
+
 		x = self.dropout1(x)
 		x = F.tanh(x)
 		return x
@@ -68,19 +79,20 @@ class CNNModel:
 		self.batch_size = batch_size
 		self.out_channels = out_channels
 		self.debug = debug
-		SENTENCE_LENGTHS = 100
 
 		self.conv_net_cell = CNN_Net(out_channels=self.out_channels, p_drop=0.3)
 		self.preprocessor = PreConv(debug=self.debug)
 
-	def get_mini_mask(self, seq_len, out_channels=64, max_seq_len=100):
-		n = min(max_seq_len, seq_len)
-		mask = torch.cat( (torch.ones(n) * 1.0/n, torch.zeros(max_seq_len - n)) ).repeat(out_channels, 1)
+		self.max_seq_len = 100
+
+	def get_mini_mask(self, seq_len):
+		n = min(self.max_seq_len, seq_len)
+		mask = torch.cat( (torch.ones(n) * 1.0/n, torch.zeros(self.max_seq_len - n)) ).repeat(self.out_channels, 1)
 		mask = Variable(torch.FloatTensor(mask), requires_grad = False)
 		return mask
 
-	def get_mask(self, lens, out_channels=64, max_seq_len=100):
-		mask = [self.get_mini_mask(len, out_channels) for len in lens]
+	def get_mask(self, lens, out_channels):
+		mask = [self.get_mini_mask(len) for len in lens]
 		mask = torch.stack(mask)
 		return mask
 
@@ -114,10 +126,11 @@ class CNNEvaluator(CNNModel):
 		# self.batch_size = batch_size
 		self.out_channels = out_channels
 		self.debug = debug
-		SENTENCE_LENGTHS = 100
 
 		self.conv_net_cell = CNN_Net(self.out_channels)
 		self.preprocessor = None
+
+		self.max_seq_len = 100
 
 	def init_preprocessor(self, data_type):
 		self.preprocessor = PreConv(data_type=data_type, debug=self.debug)
@@ -219,6 +232,8 @@ class CNNTrainer(CNNModel):
 		self.debug = debug
 		self.p_drop = p_drop
 		SENTENCE_LENGTHS = 100
+
+		self.max_seq_len = 100
 
 		if self.load_model_path == '': 
 			self.conv_net_cell = CNN_Net(out_channels=self.out_channels, p_drop=self.p_drop)
@@ -329,14 +344,17 @@ if __name__ == '__main__':
 	models_dir = '../saved_models/'
 	
 
-	# v5 model 
+
+
+
+	# v7 model  ----------------------> batch norm layer!
 	# --> this is the first model with 
-	#     conv kernel size == 7 instead of 5 or 3
-	version_num = 5
+	#    
+	version_num = 7
 	n_epochs = 10
 	for i_epoch in range(n_epochs):
-		print('epoch %d out of %d epochs, for model version 4'
-			%(i_epoch+1, n_epochs))
+		print('epoch %d out of %d epochs, for model version %d'
+			%(i_epoch+1, n_epochs, version_num))
 		save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
 		if i_epoch == 0: load_model_path = ''
 		else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
@@ -346,14 +364,108 @@ if __name__ == '__main__':
 		random.seed(7)
 		BATCH_SIZE = 5
 		LEARNING_RATE = .00001
-		DELTA = 0.1
-		OUT_CHANNELS = 150
+		DELTA = 1.0
+		OUT_CHANNELS = 120
 		DROPOUT = 0.3
 
 		# getting data before batches
 		trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
 			save_model_path, load_model_path, DEBUG, DROPOUT)
 		trainer.train()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##########################################################################
+
+
+
+
+	# # v6 model 
+	# # --> this is the first model with 
+	# version_num = 6
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+	# # post epoch 2
+
+	# DEV
+
+	# MAP 0.451090894679
+	# MRR 0.573560860069
+	# P@1 0.407407407407
+	# P@5 0.352380952381
+
+	# TEST
+
+	# MAP 0.441122694829
+	# MRR 0.55450489349
+	# P@1 0.39247311828
+	# P@5 0.332258064516
+
+
+##########################################################################
+
+
+	# # v5 model 
+	# # --> this is the first model with 
+	# #     conv kernel size == 7 instead of 5 or 3
+	# version_num = 5
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
 
 
 

@@ -29,14 +29,17 @@ class AdversaryTrainer:
 			self.encoder_net = torch.load(params.load_encoder_path)
 
 
-		self.discr_input_size = self.get_discr_input_size()
+		self.discr_input_size = params.cnn_out_channels
 
 		if params.load_discr_path == '':
 			self.discr_net = Discriminator(self.discr_input_size, params.discr_hidden_size)
 		else:
 			self.discr_net = torch.load(params.load_discr_path)
 
-		self.ub_preprocessor = PreConv(debug=params.debug)
+		self.ub_preprocessor = PreConv(
+			debug=params.debug, 
+			vectors_path=params.glove_vecs_path, 
+			emb_channels=params.glove_vecs_n_channels)
 		self.an_preprocessor = PreAndroid(debug=params.debug)
 
 		self.evaluator = AdversaryEvaluator()
@@ -44,13 +47,9 @@ class AdversaryTrainer:
 
 	def get_new_encoder_net(self):
 		if params.encoder_type == 'cnn':
-			return CNN_Net(params.cnn_out_channels, params.dropout)
+			return CNN_Net(params.cnn_out_channels, params.dropout, params.glove_vecs_n_channels)
 		elif params.encoder_type == 'lstm':
 			return None ###################################################################### TODO IMPLEMENT FOR LSTM
-
-
-	def get_discr_input_size(self):
-		return self.get_total_questions_per_batch() * params.cnn_out_channels
 
 	def get_ub_title_and_body_seqs(self, questions, candidate_ids, ids_batch):
 		title_seqs, body_seqs = [], []
@@ -69,12 +68,9 @@ class AdversaryTrainer:
 			body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
 		return title_seqs, body_seqs
 
-
 	def get_an_title_and_body_seqs(self, questions, ids_batch):
-		title_seqs, body_seqs = [], []
-		for id_batch in ids_batch:
-			title_seqs.extend([questions[q_id][0] for q_id in id_batch])
-			body_seqs.extend([questions[q_id][1] for q_id in id_batch])
+		title_seqs = [questions[q_id][0] for q_id in ids_batch]
+		body_seqs = [questions[q_id][1] for q_id in ids_batch]
 		return title_seqs, body_seqs
 
 	def get_cosine_scores_target_data(self, train_instances):
@@ -89,6 +85,16 @@ class AdversaryTrainer:
 		ub_num_questions_per_batch = params.batch_size * 22
 		return ub_num_questions_per_batch * 2 # android batch is the same size
 
+	def get_mini_mask(self, seq_len, max_seq_len=100):
+		n = min(max_seq_len, seq_len)
+		mask = torch.cat( (torch.ones(n) * 1.0/n, torch.zeros(max_seq_len - n)) ).repeat(params.cnn_out_channels, 1)
+		mask = Variable(torch.FloatTensor(mask), requires_grad = False)
+		return mask
+
+	def get_mask(self, lens):
+		mask = [self.get_mini_mask(len) for len in lens]
+		mask = torch.stack(mask)
+		return mask
 
 	def run_through_encoder(self, x, lens):
 		if params.encoder_type == 'cnn':
@@ -101,18 +107,14 @@ class AdversaryTrainer:
 		x = torch.stack(x)
 		x = torch.transpose(x, 1, 2)
 		# need the length of each text to average later
-		conv_mask = self.get_mask(lens, self.out_channels)
+		conv_mask = self.get_mask(lens)
 		return self.encoder_net(x, conv_mask)
 
 	def run_through_lstm(self, x, lens):
 		##################################################################################### TODO: IMPLEMENT FOR LSTM!
 		return
-		
 
-	def run_through_discr(self, both_out_avg): 
-		size = both_out_avg.size()
-		both_out_avg.resize_(size[0], size[1] * size[2])
-		return self.discr_net(both_out_avg)
+	def run_through_discr(self, both_out_avg): return torch.squeeze(self.discr_net(both_out_avg))
 
 	def train(self):
 		# get the ubuntu data (labeled ub)
@@ -170,17 +172,16 @@ class AdversaryTrainer:
 				an_questions, an_ids_batch)
 
 			# get all the word embedding vectors
-			ub_x_titles = self.sequences_to_input_vecs(ub_title_seqs)
-			ub_x_bodies = self.sequences_to_input_vecs(ub_body_seqs)
-
-			an_x_titles = self.sequences_to_input_vecs(an_title_seqs)
-			an_x_bodies = self.sequences_to_input_vecs(an_body_seqs)
+			ub_x_titles = [self.ub_preprocessor.sequence_to_vec(seq) for seq in ub_title_seqs]
+			ub_x_bodies = [self.ub_preprocessor.sequence_to_vec(seq) for seq in ub_body_seqs]
+			an_x_titles = [self.an_preprocessor.sequence_to_vec(seq) for seq in an_title_seqs]
+			an_x_bodies = [self.an_preprocessor.sequence_to_vec(seq) for seq in an_body_seqs]
 
 			# get the lengths of all the sequences
-			ub_lens_titles = self.sequences_to_len_masks(ub_title_seqs) 
-			ub_lens_bodies = self.sequences_to_len_masks(ub_body_seqs)
-			an_lens_titles = self.sequences_to_len_masks(an_title_seqs) 
-			an_lens_bodies = self.sequences_to_len_masks(an_body_seqs)
+			ub_lens_titles = [self.ub_preprocessor.get_seq_len(seq) for seq in ub_title_seqs]
+			ub_lens_bodies = [self.ub_preprocessor.get_seq_len(seq) for seq in ub_body_seqs]
+			an_lens_titles = [self.an_preprocessor.get_seq_len(seq) for seq in an_title_seqs]
+			an_lens_bodies = [self.an_preprocessor.get_seq_len(seq) for seq in an_body_seqs]
 
 			# run the ubuntu data forward through the cnn model
 			ub_output_titles  = self.run_through_encoder(ub_x_titles, ub_lens_titles)
@@ -206,15 +207,17 @@ class AdversaryTrainer:
 			# do discrimination and loss2 for both ubuntu and android
 			
 			# concatenate both ub and an
-			both_out_avg = torch.cat(ub_out_avg, an_out_avg)
+			both_out_avg = torch.cat([ub_out_avg, an_out_avg])
 
-			# flatten for discriminator (has fc1 layer)
+			# flatten for discriminator (has fc1 layer) ########### not sure if I have to do this actually...
 
 
 			# run through discriminator
 			out_discr = self.run_through_discr(both_out_avg)
 
 			# calculate loss2
+			# print(out_discr.size())
+			# print(discr_targets.size())
 			loss2 = bcel(out_discr, discr_targets)
 
 			# create the total loss
@@ -231,24 +234,25 @@ class AdversaryTrainer:
 			optimizer2.step()
 
 
-			mod_size = 50.0
-			if (i_batch % mod_size) == 0:
+			mod_size = 100.0
+
+			i_batch_print = i_batch + 1
+			if (i_batch_print % mod_size) == 0:
 				print('---------------------------------------------|------------------|')
 				print('batch %d out of %d . . . loss per batch  =|  %s  |'
-				%(i_batch, len(id_batches), list(total_loss.data)[0]))
+				%(i_batch_print, n_batches, list(total_loss.data)[0]))
 				print('---------------------------------------------|------------------|')
-				print('loss1 = %f'%(list(loss1)[0]))
-				print('loss2 = %f'%(list(loss1)[0]))
+				print('loss1 = %f'%(list(loss1.data)[0]))
+				print('loss2 = %f'%(list(loss2.data)[0]))
 				
 				total_time = time.time() - start_time
 				print('training for %f minutes so far'
 					%(total_time / 60.0))
-				pred_time = (total_time / i_batch) * len(id_batches)  / 60.0
+				pred_time = (total_time / i_batch_print) * n_batches  / 60.0
 				print('training on track to take %f minutes'
 					%(pred_time))
 
-
-				last_time = time.time(self.encoder_net, self.discr_net)
+				last_time = time.time()
 
 		self.evaluator.evaluate()
 		torch.save(self.encoder_net, params.save_encoder_path)

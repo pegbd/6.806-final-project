@@ -76,7 +76,8 @@ class PreAndroid:
         data_path = self.get_data_path(is_pos, dev_or_test)
 
         f = open(data_path, 'r')
-        id_pairs = [tuple(line.strip().split()) for line in f.readlines()]
+        un_split_pairs = [pair.strip().split() for pair in f.readlines()]
+        id_pairs = [(pair[0], pair[1]) for pair in un_split_pairs]
         f.close()
         return id_pairs
 
@@ -117,3 +118,8 @@ class PreAndroid:
         vec = vec[:max_seq_len]
         vec = Variable(torch.FloatTensor(vec), requires_grad=False)
         return vec
+
+
+    def get_seq_len(self, seq, max_seq_len=100):
+        len_seq = min(len([0 for w in seq.split() if w in self.vocab]), 100)   
+        return len_seq
