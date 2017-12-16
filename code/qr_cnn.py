@@ -7,6 +7,9 @@ import numpy as np
 from pre_conv import PreConv
 import random
 
+from eval_cnn import Evaluation
+import time
+
 
 # 1: Custom Maximum Margin Loss class
 # class QR_Maximum_Margin_Loss(nn.Module):
@@ -34,192 +37,678 @@ import random
 
 
 # cnn model
-class Net(nn.Module):
+class CNN_Net(nn.Module):
 	"""
 	"""
-	def __init__(self):
-		super(Net, self).__init__()
+	def __init__(self, out_channels, p_drop=0.3, in_channels=200):
+		super(CNN_Net, self).__init__()
+		self.out_channels = out_channels
+		self.in_channels = in_channels
 		# conv layer
+		self.p_drop = p_drop
 		self.conv1 = nn.Conv1d(
-			in_channels = 200,
-			out_channels = 64,
-			kernel_size = 5
+			in_channels = self.in_channels,
+			out_channels = self.out_channels,
+			kernel_size = 5, 
+			padding = 2
 		)
+		self.batch_norm = nn.BatchNorm1d(self.out_channels)
+		self.dropout1 = nn.Dropout(self.p_drop)
+
+		self.max_seq_len = 100
 
 
-	def forward(self, X, sentence_lengths):
-		"""
-		Args:
-			X: shape of (n_examples, in_channels, n_features)
-			sentence_lengths = shape of (n_examples, 1, 1)
+	def forward(self, x, conv_len_mask):
+		x = self.conv1(x)
+		x = torch.mul(x, conv_len_mask)
+		x = torch.sum(x, dim=2)
+		################################	batch norm layer added after version 6
+		x = self.batch_norm(x)
 
-		Returns:
-			x: Pytorch variable of shape 
-				(n_examples, 1, n_features)
-		"""
-		# TODO: apply batch normalization ???
-		print('______-_____')
-		print(X)
-		print(X.size())
-		x = self.conv1(X)
-		print(x)
-		print(x.size())
-		sum1 = torch.sum(x, dim=1)
-		print(sum1)
-		print(sum1.size())
-		lengths = sentence_lengths.repeat(1, sum1.size()[1])
-		print(lengths)
-		print(lengths.size())
-		
-		x = sum1.div(lengths)
-		print(x)
+
+		################################ 
+
+
+		x = self.dropout1(x)
 		x = F.tanh(x)
-		print(x)
-		print('______^______')
 		return x
 
 
-
-class CNNTrainer:
-	"""
-	"""
-	def __init__(self, batch_size, lr, l2_norm, delta, debug=False):
+class CNNModel:
+	def __init__(self, batch_size, out_channels, debug=False):
 		self.batch_size = batch_size
-		self.lr = lr
-		self.l2_norm = l2_norm
-		self.delta = delta
+		self.out_channels = out_channels
 		self.debug = debug
-		SENTENCE_LENGTHS = 100
 
-	def get_loss_data(self, train_instances):
-		loss_data = []
-		for instance in train_instances:
+		self.conv_net_cell = CNN_Net(out_channels=self.out_channels, p_drop=0.3)
+		self.preprocessor = PreConv(debug=self.debug)
 
-			# rep of question of interest and positive candidate
-			h_q = instance[0]
-			h_p = instance[1]
+		self.max_seq_len = 100
 
-			# score of positive candidate
-			s_p = F.cosine_similarity(h_q, h_p, 0)
-			scores = [s_p - s_p]
+	def get_mini_mask(self, seq_len):
+		n = min(self.max_seq_len, seq_len)
+		mask = torch.cat( (torch.ones(n) * 1.0/n, torch.zeros(self.max_seq_len - n)) ).repeat(self.out_channels, 1)
+		mask = Variable(torch.FloatTensor(mask), requires_grad = False)
+		return mask
 
-			# scores of negatives
-			for i in range(2, len(instance)):
-				h_n = instance[i]
-
-				score = F.cosine_similarity(h_q, h_n, 0) - s_p + self.delta
-				scores.append(score)
-
-			loss_data.append(torch.cat(scores, 0))
-		loss_data = torch.stack(loss_data, 1)
-		return loss_data
+	def get_mask(self, lens, out_channels):
+		mask = [self.get_mini_mask(len) for len in lens]
+		mask = torch.stack(mask)
+		return mask
 
 	def run_through_model(self, x, lens):
 		# run the model on the title/body
 		x = torch.stack(x)
 		x = torch.transpose(x, 1, 2)
 		# need the length of each text to average later
-		lens = Variable(torch.FloatTensor(lens), requires_grad=False)
-		lens.resize(lens.size()[0], 1)
-		return conv_net_cell(x, lens)
-		
+		conv_mask = self.get_mask(lens, self.out_channels)
+		return self.conv_net_cell(x, conv_mask)
 
-	def train(self, conv_net_cell):
-		print('pre-processing . . .')
-		preprocessor = PreConv(self.debug)
-		questions = preprocessor.get_question_dict()
-		candidate_ids = preprocessor.get_candidate_ids()
+	def get_cosine_scores_target_data(self, train_instances):
+		cosine_scores = [F.cosine_similarity(instance[1:], instance[0] , -1) for instance in train_instances]
+		cosine_scores = torch.stack(cosine_scores, 1).t()
+
+		# print('cosine scores size:')
+		# print(cosine_scores.t().size())
+
+		target_data = [0 for inst in range(len(train_instances))]
+		target_data = Variable(torch.LongTensor(target_data))
+		return cosine_scores, target_data
+
+	def sequences_to_input_vecs(self, sequences):
+		return [self.preprocessor.sequence_to_vec(seq) for seq in sequences]
+
+	def sequences_to_len_masks(self, sequences):
+		return [self.preprocessor.get_seq_len(seq) for seq in sequences]
+
+class CNNEvaluator(CNNModel):
+	def __init__(self, out_channels, debug=False):
+		# self.batch_size = batch_size
+		self.out_channels = out_channels
+		self.debug = debug
+
+		self.conv_net_cell = CNN_Net(self.out_channels)
+		self.preprocessor = None
+
+		self.max_seq_len = 100
+
+	def init_preprocessor(self, data_type):
+		self.preprocessor = PreConv(data_type=data_type, debug=self.debug)
+
+	def get_eval_data(self, data_type):
+		self.init_preprocessor(data_type)
+
+		eval_data = []
+
+		if data_type == 'dev': preprocessor = PreConv(data_type='dev')
+		
+		if data_type == 'test': preprocessor = PreConv(data_type='test')
+
+		# vector_dict = self.preprocessor.get_word_to_vector_dict()
+		questions = self.preprocessor.get_question_dict()
+		candidate_ids = self.preprocessor.get_candidate_ids()
+		pos_indicies_all = self.preprocessor.get_pos_indicies_all()
 
 		#gettings the batches as ids (not yet the actual data)
-		id_batches = preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
+		id_batches = self.preprocessor.split_into_batches(candidate_ids.keys(), batch_size=1)
+
+		for ids_batch in id_batches:
+			# print('one eval batch')
+
+			title_seqs, body_seqs = [], []
+
+			# for q_id in ids_batch:
+			q_id = ids_batch[0] # this line replaces the 'for' line right above
+
+			question_title_seq, question_body_seq = questions[q_id]
+
+			####### _ _ _ don't do positive example for eval _ _ _ #######
+			# pos_id = random.choice(candidate_ids[q_id][0])
+
+			# pos_title_seq, pos_body_seq = questions[pos_id]
+			####### ^^ don't do pos example for eval ^^ ########
+
+			neg_title_seqs = [questions[n][0] for n in candidate_ids[q_id][1]]
+			neg_body_seqs = [questions[n][1] for n in candidate_ids[q_id][1]]
+
+			# put all sequences together
+			# title_seqs.extend([question_title_seq] + [pos_title_seq] + neg_title_seqs)
+			title_seqs.extend([question_title_seq] + neg_title_seqs)
+			# body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
+			body_seqs.extend([question_body_seq] + neg_body_seqs)
+
+			################ commented out for loop ends ####################
+
+			# get all the word embedding vectors
+			x_titles, x_bodies = self.sequences_to_input_vecs(title_seqs), self.sequences_to_input_vecs(body_seqs)
+			
+			# get the lengths of all the sequences
+			lens_titles, lens_bodies = self.sequences_to_len_masks(title_seqs), self.sequences_to_len_masks(body_seqs)
+			
+			# run the model on the bodies
+			output_titles, output_bodies = self.run_through_model(x_titles, lens_titles), self.run_through_model(x_bodies, lens_bodies)
+			
+			# average the two for each corresponding question
+			out_avg = (output_titles + output_bodies).div(2)          
+			
+			# run the output through the loss
+			cosine_scores = F.cosine_similarity(out_avg[1:], out_avg[0] , -1)
+			scores = list(cosine_scores.data)
+
+			pos_indices = pos_indicies_all[q_id]
+			sorted_eval = [x for _,x in sorted(zip(scores, pos_indices), reverse=True)]
+			eval_data.append(sorted_eval)
+
+		return eval_data
+
+	def evaluate(self, model): 
+		eval_dev_data = self.get_eval_data(data_type='dev')
+		eval_test_data = self.get_eval_data(data_type='test')
+
+		evaluation_of_dev = Evaluation(eval_dev_data)
+		evaluation_of_test = Evaluation(eval_test_data)
+
+		print("\nDEV\n")
+		print("MAP", evaluation_of_dev.MAP())
+		print("MRR", evaluation_of_dev.MRR())
+		print("P@1", evaluation_of_dev.Precision(1))
+		print("P@5", evaluation_of_dev.Precision(5))
+
+		print("\nTEST\n")
+		print("MAP", evaluation_of_test.MAP())
+		print("MRR", evaluation_of_test.MRR())
+		print("P@1", evaluation_of_test.Precision(1))
+		print("P@5", evaluation_of_test.Precision(5))
 
 
-		print('setting up model . . .')
+class CNNTrainer(CNNModel):
+	def __init__(self, batch_size, lr, delta, out_channels, save_model_path, load_model_path='', debug=False, p_drop=0.3):
+		self.batch_size = batch_size
+		self.lr = lr
+		self.delta = delta
+		self.out_channels = out_channels
+		self.save_model_path = save_model_path
+		self.load_model_path = load_model_path
+		self.debug = debug
+		self.p_drop = p_drop
+		SENTENCE_LENGTHS = 100
+
+		self.max_seq_len = 100
+
+		if self.load_model_path == '': 
+			self.conv_net_cell = CNN_Net(out_channels=self.out_channels, p_drop=self.p_drop)
+		else: 
+			self.conv_net_cell = torch.load(self.load_model_path)
+
+		self.preprocessor = PreConv(debug=self.debug)
+		self.evaluator = CNNEvaluator(self.out_channels)
+
+	def get_title_and_body_seqs(self, questions, candidate_ids, ids_batch):
+		title_seqs, body_seqs = [], []
+		for q_id in ids_batch:
+			
+			question_title_seq, question_body_seq = questions[q_id]
+
+			pos_id = random.choice(candidate_ids[q_id][0])
+
+			pos_title_seq, pos_body_seq = questions[pos_id]
+			neg_title_seqs = [questions[n][0] for n in candidate_ids[q_id][1]]
+			neg_body_seqs = [questions[n][1] for n in candidate_ids[q_id][1]]
+			
+			# put all sequences together
+			title_seqs.extend([question_title_seq] + [pos_title_seq] + neg_title_seqs)
+			body_seqs.extend([question_body_seq] + [pos_body_seq] + neg_body_seqs)
+		return title_seqs, body_seqs
+
 		
+
+	def train(self):
+		questions = self.preprocessor.get_question_dict()
+		candidate_ids = self.preprocessor.get_candidate_ids()
+
+		#gettings the batches as ids (not yet the actual data)
+		id_batches = self.preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
+
+		mml = nn.MultiMarginLoss()
 		optimizer = optim.Adam(
-			params=conv_net_cell.parameters(),
-			lr=self.lr, 
-			weight_decay=self.l2_norm)
+			params=self.conv_net_cell.parameters(),
+			lr=self.lr)
 
-		i_batch = -1
-		for id_batch in id_batches:
+		i_batch = 0
+		last_time = time.time()
+		start_time = time.time()
+		total_time = 0.0
+		for ids_batch in id_batches:
 			i_batch += 1
-			batch_loss = 0
-			for q_id in id_batch:
-				optimizer.zero_grad()
-				question_title, question_body, q_len_title, q_len_body = questions[q_id]
 
-				pos_id = random.choice(candidate_ids[q_id][0])
+			# get the input sequences
+			title_seqs, body_seqs = self.get_title_and_body_seqs(questions, candidate_ids, ids_batch)
 
-				pos_title, pos_body, pos_len_title, pos_len_body = questions[pos_id]
+			# get all the word embedding vectors
+			x_titles, x_bodies = self.sequences_to_input_vecs(title_seqs), self.sequences_to_input_vecs(body_seqs)
+			
+			# get the lengths of all the sequences
+			lens_titles, lens_bodies = self.sequences_to_len_masks(title_seqs), self.sequences_to_len_masks(body_seqs)
+			
+			# run the data forward through the model 
+			output_titles, output_bodies = self.run_through_model(x_titles, lens_titles), self.run_through_model(x_bodies, lens_bodies)
+			
+			# average the two for each corresponding question
+			out_avg = (output_titles + output_bodies).div(2)	
+			
+			# run the output through the loss
+			train_instances = torch.chunk(out_avg, len(ids_batch))
+			cos_scores, targets = self.get_cosine_scores_target_data(train_instances)
 
-				neg_titles = [questions[n][0] for n in candidate_ids[q_id][1]]
-				neg_bodies = [questions[n][1] for n in candidate_ids[q_id][1]]
-				neg_len_titles = [questions[n][2] for n in candidate_ids[q_id][1]]
-				neg_len_bodies = [questions[n][3] for n in candidate_ids[q_id][1]]
+			loss = mml(cos_scores, targets)
+
+			# back propagate the errors
+			optimizer.zero_grad()
+			loss.backward()
+			nn.utils.clip_grad_norm(self.conv_net_cell.parameters(), 20)
+			optimizer.step()
+
+			
+			mod_size = 500.0
+			if (i_batch % mod_size) == 0:
+				print('---------------------------------------------|------------------|')
+				print('batch %d out of %d . . . loss per batch  =|  %s  |'
+				%(i_batch, len(id_batches), list(loss.data)[0]))
+				print('---------------------------------------------|------------------|')
 
 
-				x_titles = [question_title, pos_title]
-				x_titles.extend(neg_titles)
-				x_lens_titles = [q_len_title, pos_len_title]
-				x_lens_titles.extend(neg_len_titles)
-
-				x_bodies = [question_body, pos_body]
-				x_bodies.extend(neg_bodies)
-				x_lens_bodies = [q_len_body, pos_len_body]
-				x_lens_bodies.extend(neg_len_bodies)
-
-				# run the model on the bodies
-				output_titles = self.run_through_model(
-					x_titles, x_lens_titles)
-				output_bodies = self.run_through_model(
-					x_bodies, x_lens_bodies)
+				# delta_time = time.time() - last_time 
+				# time_per_question = delta_time / (self.batch_size * mod_size)
+				# print('training is taking %f seconds per question'
+				# 	%( time_per_question ))
 				
+				total_time = time.time() - start_time
+				print('training for %f minutes so far'
+					%(total_time / 60.0))
+				pred_time = (total_time / i_batch) * len(id_batches)  / 60.0
+				print('training on track to take %f minutes'
+					%(pred_time))
 
-				# average the two for each corresponding question
-				out_avg = (output_titles + output_bodies).div(2)				
-				
-				# run the output through the loss
-				# loss = mm_loss(out_avg)
-				train_instances = torch.chunk(out_avg, self.batch_size)
-				loss_data = self.get_loss_data(train_instances)
-				targets = Variable(torch.LongTensor(
-					[0 for i in range(len(loss_data))]), 
-					requires_grad=True)
 
-				mml = nn.MultiMarginLoss()
-				loss = mml(loss_data, targets)
+				last_time = time.time()
+	
 
-				# back propagate the errors
-				loss.backward()
-				print(loss)
-				batch_loss += loss
-				optimizer.step()
-			assert False
-
-			print('batch %s loss = %s'%(str(i_batch), str(batch_loss)))
-
-		torch.save(conv_net_cell.state_dict(), 'model_cnn_v1.pt')
+		# torch.save(self.conv_net_cell.state_dict(), 'model_cnn_v1.pt')
+		self.evaluator.evaluate(self.conv_net_cell)
+		torch.save(self.conv_net_cell, self.save_model_path)
 
 
 
 
-debug=True
-torch.manual_seed(1)
-random.seed(1)
-BATCH_SIZE = 1
-LEARNING_RATE = .00001
-L2_NORM = .00001
-DELTA = 1.0 # is was 0.0001 earlier
-# BATCH_SIZE = 64
-
-# getting data before batches
-trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, L2_NORM, DELTA, debug)
-conv_net_cell = Net()
-trainer.train(conv_net_cell)
+if __name__ == '__main__':
+	models_dir = '../saved_models/'
+	
 
 
-## nn.utils.clip_grad_norm(net.parameters(), 10)
+
+
+	# v7 model  ----------------------> batch norm layer!
+	# --> this is the first model with 
+	#    
+	version_num = 7
+	n_epochs = 10
+	for i_epoch in range(n_epochs):
+		print('epoch %d out of %d epochs, for model version %d'
+			%(i_epoch+1, n_epochs, version_num))
+		save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		if i_epoch == 0: load_model_path = ''
+		else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+		DEBUG = False
+		torch.manual_seed(7)
+		random.seed(7)
+		BATCH_SIZE = 5
+		LEARNING_RATE = .00001
+		DELTA = 1.0
+		OUT_CHANNELS = 120
+		DROPOUT = 0.3
+
+		# getting data before batches
+		trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+			save_model_path, load_model_path, DEBUG, DROPOUT)
+		trainer.train()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##########################################################################
+
+
+
+
+	# # v6 model 
+	# # --> this is the first model with 
+	# version_num = 6
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+	# # post epoch 2
+
+	# DEV
+
+	# MAP 0.451090894679
+	# MRR 0.573560860069
+	# P@1 0.407407407407
+	# P@5 0.352380952381
+
+	# TEST
+
+	# MAP 0.441122694829
+	# MRR 0.55450489349
+	# P@1 0.39247311828
+	# P@5 0.332258064516
+
+
+##########################################################################
+
+
+	# # v5 model 
+	# # --> this is the first model with 
+	# #     conv kernel size == 7 instead of 5 or 3
+	# version_num = 5
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+
+
+
+	# # after epoch 4
+	# training for 15.688509 minutes so far
+	# training on track to take 15.964627 minutes
+
+	# DEV
+
+	# MAP 0.452442136527
+	# MRR 0.578562564945
+	# P@1 0.428571428571
+	# P@5 0.359788359788
+
+	# TEST
+
+	# MAP 0.40801480879
+	# MRR 0.496276377506
+	# P@1 0.306451612903
+	# P@5 0.309677419355
+
+
+
+
+
+
+############################################################################
+
+	# # v4 model 
+	# # --> this is the first model with 
+	# #     conv kernel size == 3 instead of 5
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version 4'
+	# 		%(i_epoch+1, n_epochs))
+	# 	save_model_path = models_dir + 'model_cnn_v4.pt'
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v4.pt'
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 3
+	# 	LEARNING_RATE = .0001
+	# 	DELTA = 0.1
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.2
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+
+	# epoch 5 of version 4
+
+	# training is taking 0.053204 seconds per question
+	# training for 10.628970 minutes so far
+	# training on track to take 11.269366 minutes
+
+	# DEV
+
+	# MAP 0.459988345899
+	# MRR 0.571518809544
+	# P@1 0.380952380952
+	# P@5 0.356613756614
+
+	# TEST
+
+	# MAP 0.425791483675
+	# MRR 0.528413060547
+	# P@1 0.370967741935
+	# P@5 0.330107526882
+
+
+
+
+
+
+
+
+
+
+
+
+#######################################################################
+
+
+
+
+
+
+
+
+
+	# # v3 model
+	# n_epochs = 3
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version 3'
+	# 		%(i_epoch+1, n_epochs))
+	# 	save_model_path = models_dir + 'model_cnn_v3_post_epoch13.pt'
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v3_post_epoch13.pt'
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(1)
+	# 	random.seed(1)
+	# 	BATCH_SIZE = 3
+	# 	LEARNING_RATE = .000001
+	# 	DELTA = 1.0 # is was 0.0001 earlier
+	# 	OUT_CHANNELS = 200
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+	# V3 on epoch 16 ish
+
+	# training is taking 0.068564 seconds per question
+	# training for 13.684439 minutes so far
+	# training on track to take 14.508926 minutes
+
+	# DEV
+
+	# MAP 0.450649629339
+	# MRR 0.559807960135
+	# P@1 0.380952380952
+	# P@5 0.353439153439
+
+	# TEST
+
+	# MAP 0.449834048749
+	# MRR 0.569960228882
+	# P@1 0.403225806452
+	# P@5 0.34623655914
+
+	# V3 on epoch 13 ish
+	
+	# training is taking 0.072794 seconds per question
+	# training for 14.798071 minutes so far
+	# training on track to take 15.689655 minutes
+
+	# DEV
+
+	# MAP 0.450649629339
+	# MRR 0.559807960135
+	# P@1 0.380952380952
+	# P@5 0.353439153439
+
+	# TEST
+
+	# MAP 0.449834048749
+	# MRR 0.569960228882
+	# P@1 0.403225806452
+	# P@5 0.34623655914
+
+
+
+
+#######################################################################
+
+
+	# # v2 model
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version 2'
+	# 		%(i_epoch+1, n_epochs))
+	# 	save_model_path = models_dir + 'model_cnn_v2_epoch%d.pt'%(i_epoch+1)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v2_epoch%d.pt'%(i_epoch)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(1)
+	# 	random.seed(1)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 1.0 # is was 0.0001 earlier
+	# 	OUT_CHANNELS = 128
+	# 	DROPOUT = 0.5
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+	# epoch 7 version2
+	# 	training is taking 0.059478 seconds per question
+	# training for 12.573277 minutes so far
+	# training on track to take 12.794566 minutes
+	# dev set
+	# dev set
+
+
+	# DEV
+
+
+	# MAP 0.439141599593
+	# MRR 0.526655488983
+	# P@1 0.338624338624
+	# P@5 0.359788359788
+
+
+	# TEST
+
+
+	# MAP 0.430796731464
+	# MRR 0.531306387758
+	# P@1 0.360215053763
+	# P@5 0.31935483871
+
+
+
+
+
+################################################################
+
+
+
+
+	## V1 model
+	# save_model_path = models_dir + 'model_cnn_v1_epoch4.pt'
+	# load_model_path = models_dir + 'model_cnn_v1_epoch3.pt'
+	
+	# DEBUG = False
+	# torch.manual_seed(1)
+	# random.seed(1)
+	# BATCH_SIZE = 5
+	# LEARNING_RATE = .0001
+	# DELTA = 0.01
+	# OUT_CHANNELS = 64
+	# DROPOUT = 0.3
+
+	# # getting data before batches
+	# trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 	save_model_path, load_model_path, DEBUG, DROPOUT)
+	# trainer.train()
+
 
 
 
