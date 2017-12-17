@@ -10,6 +10,7 @@ from pre_android import PreAndroid
 from adversary_trainer import AdversaryTrainer
 
 import adversary_params as params
+import time
 
 
 
@@ -18,15 +19,11 @@ class AdversaryEvaluator(AdversaryTrainer):
 	def __init__(self):
 		# do not want to load parameters until we actually call evaluate
 		self.encoder_net = None
-		self.discr_input_size = None
-		self.discr_net = None
-		self.an_preprocessor = None
+		self.pre = None
 		self.questions = None
 
 	def reset_params(self):
 		self.encoder_net = torch.load(params.eval_encoder_path)
-		self.discr_input_size = params.cnn_out_channels
-		self.discr_net = torch.load(params.eval_discr_path)
 		self.pre = PreAndroid(debug=False)
 		self.questions = self.pre.get_question_dict()
 
@@ -92,27 +89,6 @@ class AdversaryEvaluator(AdversaryTrainer):
 
 			i_target += 1
 			
-
-		print('lv2')
-		# #remove 3 lines below
-		# # # get all the features organized into the corresponding pairs
-		# # pos_feats_pair = out_features[0], out_features[1]
-		# # neg_feats_pair = out_features[2], out_features[3]
-
-		# # now 'classify' the features
-		# # the positive pairs will have a target of 1
-		# # the negative features will have a target of 0
-		# pairs = (neg_feats_pair, pos_feats_pair) # purposely negative then positive
-		# for i_feats_pair in range(len(pairs)):
-		# 	feats_pair = pairs[i_feats_pair]
-		# 	for i_feats in xrange(len(feats_pair[0])):
-		# 		feats_left = feats_left[i_feats]
-		# 		feats_right = feats_right[i_feats]
-
-		# 		preds = self.get_cosine_scores(feats_left, feats_right)
-		# 		targets = Variable(torch.LongTensor(Torch.ones(len(preds) * i_feats_pair))) # 0s if neg, 1s if pos
-
-		# 		auc_meter.add(preds, targets)
 		print('lv3')
 		# all predictions are added
 		# now get the AUC value
@@ -130,11 +106,96 @@ class AdversaryEvaluator(AdversaryTrainer):
 
 
 if __name__ == '__main__':
+	start_time = time.time()
 	torch.manual_seed(1)
 	random.seed(1)
 
 	evaluator = AdversaryEvaluator()
 	
-	evaluator.evaluate('test')
-	# evaluator.evaluate('dev')
+	# evaluator.evaluate('test')
+	evaluator.evaluate('dev')
+	total_minutes = (time.time()-start_time) / 60.0
+	print('evaluation took %f minutes'%(total_minutes))
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################################################
+	# AUC(0.050000) value for test  =  0.580768
+	# AUC(0.050000) value for dev  =  0.581712
+	# evaluation took 12.711603 minutes
+	# save_encoder_path = '../saved_models/model_adversary_cnn_v2.pt'
+	# save_discr_path = '../saved_models/model_adversary_discr_v1.pt'
+
+
+
+
+
+
+
+# parameters: 
+
+
+# from __future__ import print_function
+# # parameters for the adversary network
+
+
+# # cnn (encoder) network params
+# cnn_out_channels = 128
+# dropout = 0.3
+# delta = 1.0
+# forward_lr = 0.00001
+
+# save_encoder_path = '../saved_models/model_adversary_cnn_v2.pt'
+# load_encoder_path = ''
+# eval_encoder_path = save_encoder_path
+
+
+# # android data params
+# andr_path = '../Android-master/'
+# andr_dev_pos_path = andr_path + 'dev.pos.txt'
+# andr_dev_neg_path = andr_path + 'dev.neg.txt'
+
+# andr_test_pos_path = andr_path + 'test.pos.txt'
+# andr_test_neg_path = andr_path + 'test.neg.txt'
+
+# andr_tokens_path = andr_path + 'corpus.tsv'
+
+
+# # embeddings params
+# glove_vecs_path = '../glove_vectors/glove.840B.300d.txt'
+# glove_vecs_n_channels = 300
+
+
+# # discriminator network params
+# neg_lr = -1.0 * forward_lr # do not regularize it here, the reg param is applied later
+# discr_hidden_size = 200
+
+# save_discr_path = '../saved_models/model_adversary_discr_v1.pt'
+# load_discr_path = ''
+# eval_discr_path = save_discr_path
+
+
+# # general training parameters
+# encoder_type = 'cnn'
+# n_epochs = 1
+# batch_size = 5
+# lambda_reg = 0.0001 # the regularization parameter for loss2 when computing the total loss
+# auc_max_fpr = 0.05
+
+
+# debug = False
+# if debug: print('debug is True')
+
+
+######################################################################
 

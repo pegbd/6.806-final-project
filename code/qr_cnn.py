@@ -222,7 +222,7 @@ class CNNEvaluator(CNNModel):
 
 
 class CNNTrainer(CNNModel):
-	def __init__(self, batch_size, lr, delta, out_channels, save_model_path, load_model_path='', debug=False, p_drop=0.3):
+	def __init__(self, batch_size, lr, delta, out_channels, save_model_path, load_model_path='', debug=False, p_drop=0.3, margin=1.0, w2v_or_glove='w2v'):
 		self.batch_size = batch_size
 		self.lr = lr
 		self.delta = delta
@@ -231,7 +231,7 @@ class CNNTrainer(CNNModel):
 		self.load_model_path = load_model_path
 		self.debug = debug
 		self.p_drop = p_drop
-		SENTENCE_LENGTHS = 100
+		self.margin = margin
 
 		self.max_seq_len = 100
 
@@ -269,7 +269,7 @@ class CNNTrainer(CNNModel):
 		#gettings the batches as ids (not yet the actual data)
 		id_batches = self.preprocessor.split_into_batches(candidate_ids.keys(), self.batch_size)
 
-		mml = nn.MultiMarginLoss()
+		mml = nn.MultiMarginLoss(margin=self.margin)
 		optimizer = optim.Adam(
 			params=self.conv_net_cell.parameters(),
 			lr=self.lr)
@@ -309,7 +309,7 @@ class CNNTrainer(CNNModel):
 			optimizer.step()
 
 			
-			mod_size = 500.0
+			mod_size = 100.0
 			if (i_batch % mod_size) == 0:
 				print('---------------------------------------------|------------------|')
 				print('batch %d out of %d . . . loss per batch  =|  %s  |'
@@ -347,11 +347,11 @@ if __name__ == '__main__':
 
 
 
-	# v7 model  ----------------------> batch norm layer!
-	# --> this is the first model with 
-	#    
-	version_num = 7
-	n_epochs = 10
+
+
+
+	version_num = 9
+	n_epochs = 1
 	for i_epoch in range(n_epochs):
 		print('epoch %d out of %d epochs, for model version %d'
 			%(i_epoch+1, n_epochs, version_num))
@@ -362,16 +362,131 @@ if __name__ == '__main__':
 		DEBUG = False
 		torch.manual_seed(7)
 		random.seed(7)
-		BATCH_SIZE = 5
+		BATCH_SIZE = 16
 		LEARNING_RATE = .00001
 		DELTA = 1.0
-		OUT_CHANNELS = 120
+		OUT_CHANNELS = 150
 		DROPOUT = 0.3
+		MARGIN = 0.5
 
 		# getting data before batches
 		trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
-			save_model_path, load_model_path, DEBUG, DROPOUT)
+			save_model_path, load_model_path, DEBUG, DROPOUT, MARGIN)
 		trainer.train()
+
+
+
+	# post epoch 1
+	# training for 12.357586 minutes so far
+	# training on track to take 14.034687 minutes
+
+	# DEV
+
+	# MAP 0.453927732269
+	# MRR 0.566456676229
+	# P@1 0.391534391534
+	# P@5 0.35873015873
+
+	# TEST
+
+	# MAP 0.445101377526
+	# MRR 0.530416628347
+	# P@1 0.349462365591
+	# P@5 0.341935483871
+
+
+
+
+
+
+############################################################################
+
+###########. version 8 is probably the best version so far, and this is
+###########. only after 1 epoch, so probably continue to train this later
+########### starting with version 9, we changed the margin parameter in mml
+###########  to be 0.5 instead of the 1.0 default
+
+############################################################################
+
+	# version_num = 8
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 16
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 1.0
+	# 	OUT_CHANNELS = 150
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
+
+
+	# post epoch 1
+	# training for 8.813183 minutes so far
+	# training on track to take 14.012960 minutes
+
+	# DEV
+
+	# MAP 0.453927732269
+	# MRR 0.566456676229
+	# P@1 0.391534391534
+	# P@5 0.35873015873
+
+	# TEST
+
+	# MAP 0.445101377526
+	# MRR 0.530416628347
+	# P@1 0.349462365591
+	# P@5 0.341935483871
+
+
+
+
+
+
+###########################################################################3
+
+
+
+
+
+
+	# # v7 model  ----------------------> batch norm layer!
+	# # --> this is the first model with 
+	# #    
+	# version_num = 7
+	# n_epochs = 10
+	# for i_epoch in range(n_epochs):
+	# 	print('epoch %d out of %d epochs, for model version %d'
+	# 		%(i_epoch+1, n_epochs, version_num))
+	# 	save_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+	# 	if i_epoch == 0: load_model_path = ''
+	# 	else: load_model_path = models_dir + 'model_cnn_v%d.pt'%(version_num)
+		
+	# 	DEBUG = False
+	# 	torch.manual_seed(7)
+	# 	random.seed(7)
+	# 	BATCH_SIZE = 5
+	# 	LEARNING_RATE = .00001
+	# 	DELTA = 1.0
+	# 	OUT_CHANNELS = 120
+	# 	DROPOUT = 0.3
+
+	# 	# getting data before batches
+	# 	trainer = CNNTrainer(BATCH_SIZE, LEARNING_RATE, DELTA, OUT_CHANNELS,
+	# 		save_model_path, load_model_path, DEBUG, DROPOUT)
+	# 	trainer.train()
 
 
 

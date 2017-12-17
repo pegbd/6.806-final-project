@@ -55,6 +55,7 @@ f.close()
 f = open('../askubuntu-master/text_tokenized.txt', 'r')
 print("id to question")
 vocab = set(word_to_vector.keys())
+all_ubuntu_words = set()
 id_to_question = {}
 for line in f.readlines():
     split = line.strip().split("\t")
@@ -62,6 +63,12 @@ for line in f.readlines():
     id_num = split[0].strip()
     title = split[1].strip()
     body = split[2].strip() if len(split) == 3 else ""
+
+    for w in title:
+        all_ubuntu_words.add(w.lower())
+
+    for w in body:
+        all_ubuntu_words.add(w.lower())
 
     id_to_question[id_num] = (title.split(), body.split())
 
@@ -130,3 +137,9 @@ def sentence_to_embeddings(s):
 
     padded_tail = [copy.deepcopy(EMPTY_WORD_PAD) for i in range(MAX_SEQUENCE_LENGTH - len(s))]
     return [word_to_vector[w] if w in vocab else copy.deepcopy(EMPTY_WORD_PAD) for w in s] + padded_tail
+
+
+
+
+
+

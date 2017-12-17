@@ -6,6 +6,9 @@ import numpy as np
 import preprocessing
 import time
 import random
+from pre_android import PreAndroid
+
+pre_and = PreAndroid()
 
 ####################################################################
 ########################## Custom Classes ##########################
@@ -52,7 +55,7 @@ def mirror_sequence(sequence):
 ###############################
 
 torch.manual_seed(1)
-INPUT_SIZE = 200
+INPUT_SIZE = 300 # FOR ANDROID
 HIDDEN_SIZES = [INPUT_SIZE/4, INPUT_SIZE/2, INPUT_SIZE, 2*INPUT_SIZE]
 OUTPUT_SIZE = 2
 LEARNING_RATES = [.00001, .001, .1, 1, 10]
@@ -64,7 +67,11 @@ DEL = .0001
 EPOCHS = 4
 
 # Work Space
-words = preprocessing.word_to_vector
+
+# words = preprocessing.word_to_vector # UBUNTU
+words = pre_and.word_to_vector # ANDROID
+
+# Training on Ubuntu
 questions = preprocessing.id_to_question
 candidates = preprocessing.question_to_candidates
 
@@ -128,24 +135,33 @@ def train_model_epoch(lstm, loss_func, optimizer):
                 # question of interest
                 q = questions[qr]
 
-                batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
+                # batch_title_data.append(preprocessing.sentence_to_embeddings(q[0])) # UBUNTU
+                print q[0]
+                batch_title_data.append(pre_and.list_to_vec(q[0])) # ANDROID
+
                 batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
                 batch_title_mask.append(get_mask(q[0], HIDDEN_SIZES[2]))
 
 
-                batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
+                # batch_body_data.append(preprocessing.sentence_to_embeddings(q[1])) # UBUNTU
+                batch_body_data.append(pre_and.list_to_vec(q[1]))
+
                 batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
                 batch_body_mask.append(get_mask(q[1], HIDDEN_SIZES[2]))
 
                 # positive example
                 pos = questions[pos_cand]
 
-                batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
+                # batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0])) # UBUNTU
+                batch_title_data.append(pre_and.list_to_vec(pos[0])) # ANDROID
+
                 batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
                 batch_title_mask.append(get_mask(pos[0], HIDDEN_SIZES[2]))
 
+                # batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1])) # UBUNTU
+                batch_body_data.append(pre_and.list_to_vec(pos[1])) # ANDROID
+
                 batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
-                batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
                 batch_body_mask.append(get_mask(pos[1], HIDDEN_SIZES[2]))
 
                 # negative examples
@@ -153,11 +169,15 @@ def train_model_epoch(lstm, loss_func, optimizer):
                 for n in neg_cands:
                     neg = questions[n]
 
-                    batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
+                    # batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0])) # UBUNTU
+                    batch_title_data.append(pre_and.list_to_vec(neg[0])) #ANDROID
+
                     batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[0])))
                     batch_title_mask.append(get_mask(neg[0], HIDDEN_SIZES[2]))
 
-                    batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
+                    # batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1])) # UBUNTU
+                    batch_body_data.append(pre_and.list_to_vec(neg[1]))
+
                     batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[1])))
                     batch_body_mask.append(get_mask(neg[1], HIDDEN_SIZES[2]))
 
@@ -245,8 +265,12 @@ def train_model_epoch(lstm, loss_func, optimizer):
 
         print("this batch took ", time.time() - batch_time_start)
 
+        if i > 0 and i % 50 == 0:
+            torch.save(lstm, 'qr_lstm_model_android.pt')
+
+
     # save model after each epoch
-    torch.save(lstm, 'qr_lstm_model_2.pt')
+    torch.save(lstm, 'qr_lstm_model_android.pt')
     return epoch_loss
 
 def print_params():

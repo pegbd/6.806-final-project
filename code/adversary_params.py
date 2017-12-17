@@ -3,12 +3,13 @@ from __future__ import print_function
 
 
 # cnn (encoder) network params
-cnn_out_channels = 128
+cnn_out_channels = 150
 dropout = 0.3
 delta = 1.0
-forward_lr = 0.00001
+forward_lr = 0.000001
+margin = 0.5 # the margin parameter for MultiMarginLoss (our loss1) 
 
-save_encoder_path = '../saved_models/model_adversary_cnn_v2.pt'
+save_encoder_path = '../saved_models/model_adversary_cnn_without_discr.pt'
 load_encoder_path = ''
 eval_encoder_path = save_encoder_path
 
@@ -33,7 +34,7 @@ glove_vecs_n_channels = 300
 neg_lr = -1.0 * forward_lr # do not regularize it here, the reg param is applied later
 discr_hidden_size = 200
 
-save_discr_path = '../saved_models/model_adversary_discr_v1.pt'
+save_discr_path = '../saved_models/model_adversary_discr_v3.pt'
 load_discr_path = ''
 eval_discr_path = save_discr_path
 
@@ -41,10 +42,26 @@ eval_discr_path = save_discr_path
 # general training parameters
 encoder_type = 'cnn'
 n_epochs = 1
-batch_size = 5
+batch_size = 16
 lambda_reg = 0.0001 # the regularization parameter for loss2 when computing the total loss
 auc_max_fpr = 0.05
 
 
 debug = False
 if debug: print('debug is True')
+
+
+
+
+
+
+
+use_dom_ad = False ########## only is False if direct transfer without domain adaptation
+
+
+
+
+
+
+
+
