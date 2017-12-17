@@ -78,7 +78,7 @@ for line in f.readlines():
     positive = split[1].split()
     negative = split[2].split()
 
-    negative = random.sample(negative, NEGATIVE_CANDIDATE_SIZE)
+    # negative = random.sample(negative, NEGATIVE_CANDIDATE_SIZE)
 
     question_to_candidates[question] = (positive, negative)
 

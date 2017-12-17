@@ -5,126 +5,13 @@ from torch.nn import functional as F
 import numpy as np
 import preprocessing
 import time
+import random
 
 ####################################################################
 ########################## Custom Classes ##########################
 ####################################################################
 
-# 1: Custom Maximum Margin Loss class
-class QR_Maximum_Margin_Loss(nn.Module):
-    def __init__(self):
-        super(QR_Maximum_Margin_Loss, self).__init__()
-
-    def forward(self, q, positive, negatives, del_value=.01):
-        # ctx.save_for_backward(q, positive, negatives, del_value)
-        return torch.max(torch.stack([F.cosine_similarity(q, n, 0) - F.cosine_similarity(q, positive, 0) + del_value for n in negatives]))
-
-
-# 2: Custom LSTM Cell class
-class LSTM_Cell(nn.Module):
-    """
-    An individual LSTM cell
-    """
-    def __init__(self, input_dim, hidden_dim, output_dim, use_bias=False):
-        super(LSTM_Cell, self).__init__()
-
-        self.use_bias = use_bias # for later, perhaps?
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
-
-        # input weights
-        self.W_i = nn.Linear(input_dim, hidden_dim)
-        self.W_f = nn.Linear(input_dim, hidden_dim)
-        self.W_o = nn.Linear(input_dim, hidden_dim)
-        self.W_z = nn.Linear(input_dim, hidden_dim)
-
-        # hidden weights
-        self.U_i = nn.Linear(hidden_dim, hidden_dim)
-        self.U_f = nn.Linear(hidden_dim, hidden_dim)
-        self.U_o = nn.Linear(hidden_dim, hidden_dim)
-        self.U_z = nn.Linear(hidden_dim, hidden_dim)
-
-        # output/decoder
-        self.h2o = nn.Linear(hidden_dim, output_dim)
-
-    def forward_step(self, x_t, h_t_1, c_t_1):
-
-        """
-        Computes one forward step (within a larger sequence)
-
-        inputs:
-
-        x_t = word t in the sentence
-        h_t_1 = the hidden state at step t - 1
-        c_t_1 = the visible state at step t - 1
-
-        outputs:
-
-        h_t = the current hidden state
-        c_t = the current visible state
-
-        """
-
-        # input gate
-        i = F.sigmoid(self.W_i(x_t) + self.U_i(h_t_1))
-
-        # forget gate
-        f = F.sigmoid(self.W_f(x_t) + self.U_f(h_t_1))
-
-        # output gate
-        o = F.sigmoid(self.W_o(x_t) + self.U_o(h_t_1))
-
-        # activation
-        z = F.tanh(self.W_z(x_t) + self.U_z(h_t_1))
-
-        # calculate the next visible asnd hidden states, then return
-        c_t = (i * z) + (f * c_t_1)
-        h_t = o * F.tanh(c_t)
-
-        return h_t, c_t
-
-    def forward(self, X):
-
-        """
-        Computes forward_step over the entire sequence X, and returns the averages of
-        the hidden and visible states
-
-        inputs:
-
-        X = entire matrix sequence of word vectors
-
-        outputs:
-
-        h_avg = the average over the entire sequence of hiddens states
-        c_avg = the average over the entire sequence of visible states
-        """
-
-        # initialize hidden and visible states at t = 0
-        h_0 = preprocessing.to_float_variable([0.0 for i in range(self.hidden_dim)])
-        c_0 = preprocessing.to_float_variable([0.0 for i in range(self.hidden_dim)])
-
-        h = h_0
-        c = c_0
-
-        h_prev = h_0
-        c_prev = c_0
-
-        for i in range(len(X)):
-            h_t, c_t = self.forward_step(X[i], h_prev, c_prev)
-
-            h += h_t
-            c += c_t
-            h_prev = h_t
-            c_prev = c_t
-
-        h_avg = h/len(X)
-        c_avg = c/len(X)
-
-        return (h_avg, c_avg)
-
-
-# 3. Model wrapper for built-in Bidirectional LSTM_Cell
+# 1. Model wrapper for built-in Bidirectional LSTM
 class BiDiLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, output_dim):
         super(BiDiLSTM, self).__init__()
@@ -138,11 +25,13 @@ class BiDiLSTM(nn.Module):
         # initialize the wrapped bidirectional network
         self.net = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers, batch_first=True, bidirectional=True)
 
-        # # initialize and store parameter weights
-        # self.params = {}
-        # for name, param in self.net.named_parameters():
-        #       nn.init.uniform(param, a=-2, b=2)
-        #       self.params[name] = param
+        # initialize and store parameter weights
+        self.params = {}
+        for name, param in self.net.named_parameters():
+            if 'bias' in name:
+                nn.init.constant(param, 0.0)
+            elif 'weight' in name:
+                nn.init.xavier_normal(param)
 
     def forward(self, X):
         return self.net(X)
@@ -227,42 +116,50 @@ def train_model_epoch(lstm, loss_func, optimizer):
         batch_body_mask = []
 
         format_start = time.time()
+
+        total_batch_size = 0
+
         for qr in batch:
 
-            # question of interest
-            q = questions[qr]
+            total_batch_size += len(candidates[qr][0])
 
-            batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
-            batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
-            batch_title_mask.append(get_mask(q[0], HIDDEN_SIZES[2]))
+            for pos_cand in candidates[qr][0]:
+
+                # question of interest
+                q = questions[qr]
+
+                batch_title_data.append(preprocessing.sentence_to_embeddings(q[0]))
+                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[0])))
+                batch_title_mask.append(get_mask(q[0], HIDDEN_SIZES[2]))
 
 
-            batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
-            batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
-            batch_body_mask.append(get_mask(q[1], HIDDEN_SIZES[2]))
+                batch_body_data.append(preprocessing.sentence_to_embeddings(q[1]))
+                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(q[1])))
+                batch_body_mask.append(get_mask(q[1], HIDDEN_SIZES[2]))
 
-            # positive example
-            pos = questions[candidates[qr][0][0]]
+                # positive example
+                pos = questions[pos_cand]
 
-            batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
-            batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
-            batch_title_mask.append(get_mask(pos[0], HIDDEN_SIZES[2]))
+                batch_title_data.append(preprocessing.sentence_to_embeddings(pos[0]))
+                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[0])))
+                batch_title_mask.append(get_mask(pos[0], HIDDEN_SIZES[2]))
 
-            batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
-            batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
-            batch_body_mask.append(get_mask(pos[1], HIDDEN_SIZES[2]))
+                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(pos[1])))
+                batch_body_data.append(preprocessing.sentence_to_embeddings(pos[1]))
+                batch_body_mask.append(get_mask(pos[1], HIDDEN_SIZES[2]))
 
-            # negative examples
-            for n in candidates[qr][1]:
-                neg = questions[n]
+                # negative examples
+                neg_cands = random.sample(candidates[qr][1], preprocessing.NEGATIVE_CANDIDATE_SIZE)
+                for n in neg_cands:
+                    neg = questions[n]
 
-                batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
-                batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[0])))
-                batch_title_mask.append(get_mask(neg[0], HIDDEN_SIZES[2]))
+                    batch_title_data.append(preprocessing.sentence_to_embeddings(neg[0]))
+                    batch_title_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[0])))
+                    batch_title_mask.append(get_mask(neg[0], HIDDEN_SIZES[2]))
 
-                batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
-                batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[1])))
-                batch_body_mask.append(get_mask(neg[1], HIDDEN_SIZES[2]))
+                    batch_body_data.append(preprocessing.sentence_to_embeddings(neg[1]))
+                    batch_body_lengths.append(1.0 / min(preprocessing.MAX_SEQUENCE_LENGTH, len(neg[1])))
+                    batch_body_mask.append(get_mask(neg[1], HIDDEN_SIZES[2]))
 
         print("formatting took ", time.time() - format_start)
 
@@ -308,7 +205,7 @@ def train_model_epoch(lstm, loss_func, optimizer):
         final_question_reps = (averaged_title_states + averaged_body_states).div(2)
 
         # separate out each training instance in the batch
-        training_instances = torch.chunk(final_question_reps, len(batch))
+        training_instances = torch.chunk(final_question_reps, total_batch_size)
 
         ###############################################
         ## Calculate Loss for Each Training Instance ##
@@ -349,7 +246,7 @@ def train_model_epoch(lstm, loss_func, optimizer):
         print("this batch took ", time.time() - batch_time_start)
 
     # save model after each epoch
-    torch.save(lstm, 'qr_lstm_model.pt')
+    torch.save(lstm, 'qr_lstm_model_2.pt')
     return epoch_loss
 
 def print_params():
@@ -360,10 +257,13 @@ def print_params():
 def load_model():
     return torch.load('qr_lstm_model.pt')
 
-def initialize():
+def initialize(new_model=False):
 
-    # Initialize Network and Optimizer
-    model = load_model()
+    if new_model:
+        model = BiDiLSTM(input_dim=INPUT_SIZE, hidden_dim=HIDDEN_SIZES[2], num_layers=NUM_LAYERS, output_dim=OUTPUT_SIZE)
+    else:
+        model = load_model()
+
     mml = nn.MultiMarginLoss()
     optimizer = optim.Adam(params=model.parameters(), lr=LEARNING_RATES[1], weight_decay=L2_NORMS[2])
 
