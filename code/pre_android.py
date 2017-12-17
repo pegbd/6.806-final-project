@@ -3,9 +3,8 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 import random
-
+import preprocessing
 import adversary_params as params
-
 
 class PreAndroid:
     def __init__(self, debug=False):
@@ -13,6 +12,8 @@ class PreAndroid:
 
         self.vectors_path = params.glove_vecs_path
         self.tokens_path = params.andr_tokens_path
+
+        self.all_seen_words = set(self.get_corpus_vocabulary().keys()).union(preprocessing.all_ubuntu_words)
 
         self.blank_vec = [0.0] * params.glove_vecs_n_channels
         self.word_to_vector = self.get_word_to_vector_dict()
@@ -79,6 +80,7 @@ class PreAndroid:
 
         f = open(self.tokens_path, 'r')
         vocab = set()
+        d = {}
         for line in f.readlines():
             split = line.strip().split("\t")
 
@@ -92,8 +94,14 @@ class PreAndroid:
                 for w in body.split():
                     vocab.add(w.lower())
 
-        f.close()
-        return sorted(list(vocab))
+
+        vocab = sorted(list(vocab))
+
+        for i in range(len(vocab)):
+            word = vocab[i]
+            d[word] = i
+
+        return d
 
     def get_word_to_vector_dict(self):
         # create the word_to_vector dictionary
@@ -103,14 +111,19 @@ class PreAndroid:
         word_to_vector = {}
         count=0
         for line in f.readlines():
+
+            if count % 100 == 0:
+                print (count)
+
             count += 1
             if self.debug and count > 1000: break
             split = line.strip().split(" ")
             word = split[0]
 
-            vec = [float(val) for val in split[1:]]
+            if word.lower() in self.all_seen_words:
+                vec = [float(val) for val in split[1:]]
 
-            word_to_vector[word] = vec
+                word_to_vector[word] = vec
 
         f.close()
         return word_to_vector
@@ -170,6 +183,16 @@ class PreAndroid:
         # asserting the max sequence length
         vec = vec[:max_seq_len]
         vec = Variable(torch.FloatTensor(vec), requires_grad=False)
+        return vec
+
+    # required for LSTM
+    def list_to_vec(self, list, max_seq_len=100):
+        vec = [self.word_to_vector[w] for w in list if w in self.vocab]
+        # pad title with blanks
+        len_seq = min(len(vec), 100)
+        vec.extend([self.blank_vec for _ in range(max_seq_len - len_seq)])
+        # asserting the max sequence length
+        vec = vec[:max_seq_len]
         return vec
 
 
