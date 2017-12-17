@@ -4,13 +4,12 @@ from torch.nn import functional as F
 from torch.autograd import Variable
 import random
 from meter import AUCMeter
+import numpy as np
 
 from pre_android import PreAndroid
 from adversary_trainer import AdversaryTrainer
 
 import adversary_params as params
-
-
 
 
 
@@ -74,6 +73,8 @@ class AdversaryEvaluator(AdversaryTrainer):
 		print('lv1')
 		i_target = 0
 		for ids_batches_pair in data_sets:
+			assert i_target < 2
+			print('dataset number %d'%(i_target))
 
 			ids_batches_left = ids_batches_pair[0]
 			ids_batches_right = ids_batches_pair[1]
@@ -85,15 +86,12 @@ class AdversaryEvaluator(AdversaryTrainer):
 				feats_left = self.get_output(ids_batch_left)
 				feats_right = self.get_output(ids_batch_right)
 
-				preds = self.get_cosine_scores(feats_left, feats_right)
-				# targets = Variable(torch.LongTensor(torch.ones(len(preds) * i_target))) # 0s if neg, 1s if pos
-				targets = torch.ones(len(preds)) * i_target # 0s if neg, 1s if pos
-				print(targets.size())
-				print(len(targets))
+				preds = self.get_cosine_scores(feats_left, feats_right).data.numpy()
+				targets = np.ones(len(preds)) * i_target # 0s if neg, 1s if pos
 				auc_meter.add(preds, targets)
 
 			i_target += 1
-			assert i_target < 2
+			
 
 		print('lv2')
 		# #remove 3 lines below
@@ -136,6 +134,7 @@ if __name__ == '__main__':
 	random.seed(1)
 
 	evaluator = AdversaryEvaluator()
-	evaluator.evaluate('dev')
+	
 	evaluator.evaluate('test')
+	# evaluator.evaluate('dev')
 

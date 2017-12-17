@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 import random
+import string
 
 import adversary_params as params
 
@@ -134,7 +135,7 @@ class PreAndroid:
             title = split[1].strip()
             body = split[2].strip() if len(split) == 3 else None
 
-            id_to_question[id_num] = (title, body)
+            id_to_question[id_num] = (title.lower(), body.lower())
 
         f.close()
         return id_to_question
