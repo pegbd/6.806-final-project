@@ -112,10 +112,15 @@ if __name__ == '__main__':
 
 	evaluator = AdversaryEvaluator()
 	
-	# evaluator.evaluate('test')
-	evaluator.evaluate('dev')
+	evaluator.evaluate('test')
+	# evaluator.evaluate('dev')
 	total_minutes = (time.time()-start_time) / 60.0
 	print('evaluation took %f minutes'%(total_minutes))
+
+
+# for
+# 	AUC(0.050000) value for dev  =  0.454898
+# evaluation took 19.061163 minutes
 
 
 
