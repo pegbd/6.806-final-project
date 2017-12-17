@@ -14,10 +14,9 @@ class PreAndroid:
         self.vectors_path = params.glove_vecs_path
         self.tokens_path = params.andr_tokens_path
 
-        self.blank_vec = [0.0] * params.glove_vecs_n_channels 
+        self.blank_vec = [0.0] * params.glove_vecs_n_channels
         self.word_to_vector = self.get_word_to_vector_dict()
         self.vocab = set(self.word_to_vector.keys())
-
 
     def split_into_batches(self, id_pairs):
         actual_batch_size = params.batch_size * 22
@@ -72,8 +71,31 @@ class PreAndroid:
 
         return left_batches, right_batches
 
+    def get_corpus_vocabulary(self):
+        """
+        Reads the entire corpus.tsv file and generates a list of all the apparent words.
+        Will be used for bag_of_words implementation.
+        """
 
-    def get_word_to_vector_dict(self): 
+        f = open(self.tokens_path, 'r')
+        vocab = set()
+        for line in f.readlines():
+            split = line.strip().split("\t")
+
+            title = split[1].strip()
+            body = split[2].strip() if len(split) == 3 else None
+
+            for w in title.split():
+                vocab.add(w.lower())
+
+            if body:
+                for w in body.split():
+                    vocab.add(w.lower())
+
+        f.close()
+        return sorted(list(vocab))
+
+    def get_word_to_vector_dict(self):
         # create the word_to_vector dictionary
 
         f = open(self.vectors_path, 'r')
@@ -125,7 +147,7 @@ class PreAndroid:
 
     def get_question_dict(self):
         f = open(self.tokens_path, 'r')
-        
+
         id_to_question = {}
         for line in f.readlines():
             split = line.strip().split("\t")
@@ -152,5 +174,5 @@ class PreAndroid:
 
 
     def get_seq_len(self, seq, max_seq_len=100):
-        len_seq = min(len([0 for w in seq.split() if w in self.vocab]), 100)   
+        len_seq = min(len([0 for w in seq.split() if w in self.vocab]), 100)
         return len_seq
